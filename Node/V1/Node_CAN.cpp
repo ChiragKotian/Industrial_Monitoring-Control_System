@@ -1,6 +1,18 @@
 #include "Node_CAN.h"
 #include "Node_Registry.h"
 
+// 📦 Define a robust staging footprint for multi-packet reconstruction
+struct LMPAssemblyBuffer {
+    uint8_t  rawPayload[32];       // Handles up to 32 bytes of compiled sensor data
+    uint8_t  bytesWritten;         // Tracks current insertion pointer index
+    uint8_t  expectedNextCount;    // Enforces strict descending countdown checking
+    bool     inProgress;           // Guards against orphaned mid-stream fragments
+    uint8_t  retryCounter;
+};
+
+// Allocate an assembly line slot for every possible node on the bus
+static LMPAssemblyBuffer assemblyLine[MAX_NODE_ID + 1];
+
 // 🔌 Instantiate static class members
 SPIClass NodeCAN::hspiCAN(HSPI); // Use ESP32's secondary hardware SPI bus unit
 MCP2515 NodeCAN::mcp2515(CAN_CS);
@@ -61,53 +73,93 @@ void NodeCAN::broadcastEndCycle() {
  * @brief Core decoding engine. Translates raw CAN bytes into true physical engineering units.
  */
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
-    uint32_t rawId = frame.can_id;
+    uint32_t rawId = frame.can_id; 
     
-    // Check if it's a standard data frame from a valid LMP range (1 to 240)
-    if (rawId >= 1 && rawId <= MAX_NODE_ID) {
+    if (rawId < 1 || rawId > MAX_NODE_ID) return;
+    if (frame.can_dlc < 3 || frame.data[0] != 0x00) return; // Standard target check
+    
+    uint8_t instructionId = frame.data[1]; 
+    uint8_t packetsLeft   = frame.data[2]; 
+    uint8_t dataBytesInMsg = frame.can_dlc - 3; 
+    
+    LMPAssemblyBuffer& session = assemblyLine[rawId];
+
+    switch (instructionId) {
         
-        // CASE A: Processing a response during Discovery Mode
-        if (currentBusState == STATE_COLLECTING_REPLIES) {
-            // Check if the packet is explicitly targeted to the Hub
-            if (frame.can_dlc >= 3 && frame.data[0] == 0x00) { 
+        case 0x04: // 📊 Processing Segmented Data Chunks
+            if (currentBusState != STATE_OPERATIONAL_MODE) return;
+            
+            // Initializing a pristine stream sequence
+            if (!session.inProgress) {
+                session.bytesWritten = 0;
+                session.expectedNextCount = packetsLeft;
+                session.inProgress = true;
+            } 
+            // 🚨 SEQUENCE GAP DETECTED! (e.g., expected 1, but received 0)
+            else if (packetsLeft != session.expectedNextCount) {
                 
-                // Check if the instruction code is a Discovery Response (0x01)
-                if (frame.data[1] == 0x01) {
+                if (session.retryCounter < MAX_RETRIES_ALLOWED) {
+                    session.retryCounter++;
+                    session.inProgress = false; // Reset this broken session stream
                     
-                    // ✅ Corrected: Extract additional info from Byte 2 per your standard
-                    uint8_t groupType = frame.data[2]; 
+                    Serial.print(F("[Protocol Recovery] Gap detected on Node "));
+                    Serial.print(rawId);
+                    Serial.print(F(". Issuing NACK Retry #"));
+                    Serial.println(session.retryCounter);
                     
-                    // Register unit in our thread-safe system registry
-                    NodeRegistry::registerNode(rawId, groupType);
+                    // 🚀 Execute Active Error Correction! Request the LMP to resend last data stream
+                    sendCommand(rawId, CMD_REQ_RESEND);
+                } 
+                else {
+                    // 🛑 Exhausted all retries. The line is physically too noisy or disconnected.
+                    session.inProgress = false;
+                    session.retryCounter = 0; // Clear counter for next cycle
                     
-                    // Acknowledge by sending the Operational Mode command (0x02)
-                    sendCommand(rawId, 0x02); 
-                }   
+                    // Flag a high-level network communication alert bitmask in the registry
+                    NodeRegistry::updateNodeError(rawId, 0x04); // 0x04 = Packet Loss Fault
+                    
+                    Serial.print(F("[CRITICAL FAULT] Node "));
+                    Serial.define(rawId);
+                    Serial.println(F(" failed retransmission bounds. Tagging Comms Error."));
+                }
+                return;
             }
-        }
-        // CASE B: Processing streaming metrics during Operational Mode
-        else if (currentBusState == STATE_OPERATIONAL_MODE) {
-            if (frame.can_dlc == 8) { // Expecting full 8-byte telemetry payload
-                
-                // Extract and reverse the mathematical fixed-point values back into floats
-                // Formula: Original float = (HighByte << 8 | LowByte) / 100.0
-                int16_t rawObj1 = (frame.data[0] << 8) | frame.data[1];
-                int16_t rawObj2 = (frame.data[2] << 8) | frame.data[3];
-                int16_t rawAmb  = (frame.data[4] << 8) | frame.data[5];
-                uint16_t rawHum = (frame.data[6] << 8) | frame.data[7];
-                
-                float objTemp1  = rawObj1 / 100.0f;
-                float objTemp2  = rawObj2 / 100.0f;
-                float ambient   = rawAmb  / 100.0f;
-                float humidity  = rawHum  / 100.0f;
-                
-                // Direct injection into our thread-safe system registry
-                NodeRegistry::updateTelemetry(rawId, objTemp1, objTemp2, ambient, humidity);
+            
+            // If sequence check passes, stream bytes into staging array as normal
+            for (uint8_t i = 0; i < dataBytesInMsg; i++) {
+                if (session.bytesWritten < 32) {
+                    session.rawPayload[session.bytesWritten] = frame.data[3 + i];
+                    session.bytesWritten++;
+                }
             }
-        }
+            
+            if (packetsLeft > 0) {
+                session.expectedNextCount--; 
+            } 
+            else {
+                // 🎉 Final segment received successfully!
+                session.inProgress = false; 
+                session.retryCounter = 0; // Reset retry counter on full completion success
+                
+                // Execute standard bitwise reconstruction...
+                if (session.bytesWritten >= 5) {
+                    int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                    int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                    uint8_t rawHum = session.rawPayload[4];
+                    
+                    float objectTemp1 = rawObj / 10.0f;
+                    float ambientTemp = rawAmb / 10.0f;
+                    float humidity    = rawHum / 2.0f;
+                    
+                    NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
+                }
+            }
+            break;
+            
+        default:
+            break;
     }
 }
-
 /**
  * @brief The Continuous Execution Thread run by the FreeRTOS Scheduler on Core 1.
  */
