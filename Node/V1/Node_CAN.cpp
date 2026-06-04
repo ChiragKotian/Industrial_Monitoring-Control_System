@@ -163,20 +163,78 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
             } 
             // Step E: Target Zero Hit! Sequence execution complete. Unpack database numbers.
             else {
+                // 🎉 Final segment received successfully!
                 session.inProgress = false; 
-                session.retryCounter = 0; // Clear error tracker on transmission success
+                session.retryCounter = 0; 
                 
-                if (session.bytesWritten >= 5) {
-                    int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
-                    int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
-                    uint8_t rawHum = session.rawPayload[4];
+                // 🕵️‍♂️ Step 1: Query the Thread-Safe Registry to find out who this node is
+                LMPDataRecord nodeInfo;
+                if (NodeRegistry::getNodeSnapshot(rawId, nodeInfo)) {
+
+                    // 🚀 STEP 1.5: Ship raw bytes straight to the background SD card logging queue!
+                    // This is completely polymorphic. It hands off the raw buffer payload and length
+                    // without doing any math here on Core 1.
+                    NodeStorage::queueRawRow(rawId, nodeInfo.groupType, session.rawPayload, session.bytesWritten);
                     
-                    // Decode structural formats accurately matching physical quantizations
-                    float objectTemp1 = rawObj / 10.0f;
-                    float ambientTemp = rawAmb / 10.0f;
-                    float humidity    = rawHum / 2.0f;
-                    
-                    NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
+                    // 🎛️ Step 2: Branch the parsing logic dynamically based on the verified Group Type
+                    switch (nodeInfo.groupType) {
+                        
+                        // ==========================================================
+                        // 🌡️ GROUP 1: Thermal & Humidity Monitoring Panel
+                        // Payload Expectation: [ObjHigh, ObjLow, AmbHigh, AmbLow, HumRaw]
+                        // ==========================================================
+                        case 1: 
+                            if (session.bytesWritten >= 5) {
+                                int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                                int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                                uint8_t rawHum = session.rawPayload[4];
+                                
+                                float objectTemp1 = rawObj / 10.0f; // Scale applied
+                                float ambientTemp = rawAmb / 10.0f; // Scale applied
+                                float humidity    = rawHum / 2.0f;  // Scale applied
+                                
+                                NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
+                            }
+                            break;
+                            
+                        // ==========================================================
+                        // 🎚️ GROUP 2: High-Density Digital Actuator / Relay Status Panel
+                        // Payload Expectation: 5 Raw Bytes containing discrete status indicators (No multipliers)
+                        // ==========================================================
+                        case 2:
+                            if (session.bytesWritten >= 5) {
+                                // Extract bytes directly as whole integers, bitmasks, or flags without division
+                                uint8_t switchStatusMask = session.rawPayload[0]; 
+                                uint8_t breakerFeedback  = session.rawPayload[1];
+                                uint8_t interlockState   = session.rawPayload[2];
+                                uint8_t warningRegister  = session.rawPayload[3];
+                                uint8_t localCounter     = session.rawPayload[4];
+                                
+                                // Process raw numbers directly into custom registry slots or error bitmasks
+                                NodeRegistry::updateNodeError(rawId, warningRegister);
+                                
+                                // (For example, we can store discrete statuses inside unused parameters or log them)
+                                Serial.print(F("[Group 2 Parser] Node "));
+                                Serial.print(rawId);
+                                Serial.print(F(" Raw Feedback Register: 0x"));
+                                Serial.println(switchStatusMask, HEX);
+                            }
+                            break;
+                            
+                        // ==========================================================
+                        // 📈 GROUP 3: Future Expansion (e.g., Vibration / Current Transformers)
+                        // ==========================================================
+                        case 3:
+                            // Future engineers can drop their specialized conversion math right here
+                            break;
+                            
+                        default:
+                            Serial.print(F("[Protocol Error] Unknown Group Type "));
+                            Serial.print(nodeInfo.groupType);
+                            Serial.print(F(" for Node ID: "));
+                            Serial.println(rawId);
+                            break;
+                    }
                 }
             }
             break;
