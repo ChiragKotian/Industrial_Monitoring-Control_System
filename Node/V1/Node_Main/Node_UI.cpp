@@ -15,9 +15,11 @@ struct HmiEvent {
 
 // 🎛️ Static Member Instantiations
 // Address 0x3C is standard for onboard Heltec SSD1306 screens over internal I2C (SDA=17, SCL=18)
-SSD1306Wire NodeUI::display(0x3c, 17, 18); 
+SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
 MenuLevel NodeUI::activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
 uint8_t NodeUI::selectedDeviceIndex = 0;
+
+static uint8_t currentLiveIndex = 0;
 
 // Internal FreeRTOS Inter-task communication queue handle
 static QueueHandle_t xHmiQueue = NULL;
@@ -52,6 +54,12 @@ void NodeUI::init() {
         return;
     }
 
+    // ⚡ STEP 1.5: PHYSICAL BOOT SEQUENCE FOR HELTEC V3 ONBOARD SCREEN
+    // A. Supply power to the OLED panel regulator via the Vext Rail
+    pinMode(Vext, OUTPUT);
+    digitalWrite(Vext, LOW); // LOW turns on the MOSFET switch to supply 3.3V
+    delay(100);            // Crucial stabilization window for voltage lines
+
     // 2. Wake up local Heltec physical display panel
     display.init();
     display.flipScreenVertically();
@@ -59,7 +67,7 @@ void NodeUI::init() {
     
     // 3. Configure Input Navigation Buttons (Pins 1, 2, 3, 19, 20 as examples)
     // Adjust these definitions to match your layout or the Heltec onboard user button (PRG = Pin 0)
-    uint8_t buttonPins[] = {0, 1, 2, 3}; 
+    uint8_t buttonPins[] = {0}; 
     for(uint8_t pin : buttonPins) {
         pinMode(pin, INPUT_PULLUP);
         // Bind hardware lines directly into our optimized execution ISR router
@@ -72,13 +80,16 @@ void NodeUI::init() {
 /**
  * @brief Renders the static top bar area across dashboard spaces.
  */
-void NodeUI::renderHeader() {
+void NodeUI::renderHeader(){
+    uint8_t activeNodes[MAX_NODE_ID];
+    uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(0, 0, "HPCL NODE GATEWAY");
+    display.drawString(0, 0, "HPCL REGISTRY: " + String(totalFound)); // 🚀 Shows live registry count!
     
     display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    display.drawString(128, 0, "SS-A1"); // Substation profile mapping
+    display.drawString(128, 0, "SS-A1"); 
     
     display.drawHorizontalLine(0, 12, 128);
 }
@@ -96,30 +107,42 @@ void NodeUI::drawAutoDashboard() {
     if (totalFound == 0) {
         display.setTextAlignment(TEXT_ALIGN_CENTER);
         display.setFont(ArialMT_Plain_10);
-        display.drawString(64, 32, "SCANNING NETWORK...");
-        display.drawString(64, 45, "[Waiting for LMPs]");
+        display.drawString(64, 25, "SCANNING NETWORK...");
+        display.drawString(64, 40, "[Waiting for LMPs]");
         return;
     }
     
-    // Let the auto-scroller select a device index based on system runtime loops
+    // Smoothly cycle through the list of all nodes that successfully passed discovery parameters
     uint32_t activeIndex = (millis() / 3000) % totalFound; 
+    currentLiveIndex = activeIndex;
     uint8_t currentLmpId = activeNodes[activeIndex];
     
     LMPDataRecord snapshot;
     if (NodeRegistry::getNodeSnapshot(currentLmpId, snapshot)) {
         display.setFont(ArialMT_Plain_16);
         display.setTextAlignment(TEXT_ALIGN_LEFT);
-        display.drawString(0, 16, "LMP ID: " + String(currentLmpId));
+        display.drawString(0, 15, "LMP ID: " + String(currentLmpId));
         
         display.setFont(ArialMT_Plain_10);
-        display.drawString(0, 36, "Obj T: " + String(snapshot.objectTemp1, 1) + " C");
-        display.drawString(0, 48, "Amb T: " + String(snapshot.ambientTemp, 1) + " C");
-        
         display.setTextAlignment(TEXT_ALIGN_RIGHT);
-        display.drawString(128, 48, "RH: " + String(snapshot.humidity, 0) + "%");
+        display.drawString(128, 15, "GRP: " + String(snapshot.groupType));
+        display.setTextAlignment(TEXT_ALIGN_LEFT);
         
-        // Show group profile validation marker
-        display.drawString(128, 16, "GRP: " + String(snapshot.groupType));
+        // 🎛️ DYNAMIC PROFILE RENDERING MATRIX
+        if (snapshot.groupType == 1) { 
+            // 🌡️ Profile 1: Analog Thermal Metric Quantizations
+            display.drawString(0, 34, "Obj T: " + String(snapshot.objectTemp1, 1) + " C");
+            display.drawString(0, 46, "Amb T: " + String(snapshot.ambientTemp, 1) + " C");
+            display.setTextAlignment(TEXT_ALIGN_RIGHT);
+            display.drawString(128, 46, "RH: " + String(snapshot.humidity, 0) + "%");
+        } 
+        else if (snapshot.groupType == 2) { 
+            // 🎚️ Profile 2: Discrete State Flags for Relay Control Panels
+            display.drawString(0, 34, "VCB Breaker: CLOSED");
+            display.drawString(0, 46, "Aux Fan 1:   RUNNING");
+            display.setTextAlignment(TEXT_ALIGN_RIGHT);
+            display.drawString(128, 46, "SYS: OK");
+        }
     }
 }
 
@@ -140,7 +163,6 @@ void NodeUI::drawDeviceTelemetryPage(uint8_t targetId) {
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 14, "DIAGNOSTICS -> ID " + String(targetId));
-    
     display.drawString(0, 26, "IR Probe 1:  " + String(snapshot.objectTemp1, 2) + " C");
     display.drawString(0, 38, "Encl Amb:    " + String(snapshot.ambientTemp, 2) + " C");
     display.drawString(0, 50, "Encl Hum:    " + String(snapshot.humidity, 1) + " %RH");
@@ -161,26 +183,26 @@ void NodeUI::handleButtonPush(uint8_t buttonId, bool isLongPress) {
     if (buttonId == 0) {
         if (activeMenuState == MENU_AUTO_SCROLL_DASHBOARD) {
             activeMenuState = MENU_DEVICE_DEEP_DIVE;
-            selectedDeviceIndex = 0; // Lock on first item entry
+            selectedDeviceIndex = currentLiveIndex; // Lock on first item entry
         } else {
             activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
         }
     }
     
     // Example rules for changing nodes while viewing the Deep Dive screen
-    if (activeMenuState == MENU_DEVICE_DEEP_DIVE) {
-        uint8_t activeNodes[MAX_NODE_ID];
-        uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+    // if (activeMenuState == MENU_DEVICE_DEEP_DIVE) {
+    //     uint8_t activeNodes[MAX_NODE_ID];
+    //     uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
         
-        if (totalFound > 0) {
-            if (buttonId == 1) { // Up Pin increment mapping
-                selectedDeviceIndex = (selectedDeviceIndex + 1) % totalFound;
-            }
-            if (buttonId == 2) { // Down Pin decrement mapping
-                selectedDeviceIndex = (selectedDeviceIndex + totalFound - 1) % totalFound;
-            }
-        }
-    }
+    //     if (totalFound > 0) {
+    //         if (buttonId == 1) { // Up Pin increment mapping
+    //             selectedDeviceIndex = (selectedDeviceIndex + 1) % totalFound;
+    //         }
+    //         if (buttonId == 2) { // Down Pin decrement mapping
+    //             selectedDeviceIndex = (selectedDeviceIndex + totalFound - 1) % totalFound;
+    //         }
+    //     }
+    // }
 }
 
 /**

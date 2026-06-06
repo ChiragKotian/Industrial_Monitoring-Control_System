@@ -10,6 +10,12 @@
 #define CAN_CS      7
 #define CAN_INT     2
 
+// 💾 Custom Physical Pins for SD Storage Module
+#define SD_MOSI     48
+#define SD_MISO     19
+#define SD_SCK      20
+#define SD_CS       26
+
 // 📊 Protocol & Registry Allocations
 #define MAX_NODE_ID       240
 #define EMPTY_SLOT_MARK   255

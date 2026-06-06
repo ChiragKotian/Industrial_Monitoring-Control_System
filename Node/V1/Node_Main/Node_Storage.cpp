@@ -3,11 +3,20 @@
 bool NodeStorage::sdAvailable = false;
 static QueueHandle_t xStorageQueue = NULL;
 
+// 🔑 Create a completely independent SPI bus instance for the SD Card
+static SPIClass sdSPI(FSPI);
+
 void NodeStorage::init() {
     xStorageQueue = xQueueCreate(30, sizeof(LogPayload));
     if (xStorageQueue == NULL) return;
 
-    if (!SD.begin(sdCS)) {
+
+    // 🚀 FIXED: Map the independent SPI hardware controller to your visible pins
+    sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+
+    // Pass your customized tracking SPI object into the SD mount loop
+    if (!SD.begin(SD_CS, sdSPI)) {
+        Serial.println(F("[Storage Engine] Initialization failed! Check pin connections on 38-41."));
         sdAvailable = false;
         return;
     }
@@ -15,11 +24,11 @@ void NodeStorage::init() {
     File file = SD.open("/telemetry.csv", FILE_APPEND);
     if (file) {
         if (file.size() == 0) {
-            // Standard generic data ledger columns
             file.println(F("Timestamp_ms,Node_ID,Group_Type,Parsed_Industrial_Telemetry_Line"));
         }
         file.close();
         sdAvailable = true;
+        Serial.println(F("[Storage Engine] Custom SPI SD Card verified successfully."));
     }
 }
 

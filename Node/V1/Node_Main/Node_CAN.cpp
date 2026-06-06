@@ -1,5 +1,8 @@
 #include "Node_CAN.h"
 #include "Node_Registry.h"
+#include "Node_Storage.h"
+
+// extern TaskHandle_t xCanTaskHandle;
 
 // 📦 Define local constants if not explicitly loaded from headers
 #define CMD_REQ_RESEND      0x05
@@ -78,78 +81,75 @@ void NodeCAN::broadcastEndCycle() {
  * @brief Core decoding engine. Translates raw CAN bytes into true physical engineering units.
  */
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
-    uint32_t rawId = frame.can_id; 
+uint32_t rawId = frame.can_id; 
     
     // Validate standard tracking range
-    if (rawId < 1 || rawId > MAX_NODE_ID) return;
+    if (rawId < 1 || rawId > MAX_NODE_ID) {
+        Serial.print(F("[CAN Diagnostic] Rejected Node ID Out of Bounds: "));
+        Serial.println(rawId);
+        return;
+    }
     
-    // 🛡️ Standard Layout Enforcer: All frames must target the Central Hub (data[0] == 0x00)
-    if (frame.can_dlc < 2 || frame.data[0] != 0x00) return; 
+    // Standard Layout Enforcer
+    if (frame.can_dlc < 3 || frame.data[0] != 0x00) {
+        Serial.print(F("[CAN Diagnostic] Frame rejected on overhead layouts from ID: "));
+        Serial.println(rawId);
+        return;
+    } 
     
     uint8_t instructionId  = frame.data[1]; 
-    
-    // Pull references to our isolated sequence tracker table slot
     LMPAssemblyBuffer& session = assemblyLine[rawId];
 
     switch (instructionId) {
         
         // 🔍 CASE 1: Processing responses during Discovery Phase
         case 0x01:
-            if (currentBusState == STATE_COLLECTING_REPLIES && frame.can_dlc >= 3) {
-                // Per protocol standard: additional metadata fields trail after instruction index
+            Serial.print(F("[CAN Diagnostic] Discovery Packet received from Node: "));
+            Serial.print(rawId);
+            Serial.print(F(" | Current Bus State: "));
+            Serial.println(currentBusState); // Enforces tracking verification
+            
+            if (currentBusState == STATE_COLLECTING_REPLIES) {
                 uint8_t groupType = frame.data[2]; 
-                
                 NodeRegistry::registerNode(rawId, groupType);
                 
-                // Send immediate validation command acknowledging this specific LMP (CMD: 0x02)
+                Serial.print(F("🎉 SUCCESS: Node "));
+                Serial.print(rawId);
+                Serial.print(F(" registered into Group "));
+                Serial.println(groupType);
+                
                 sendCommand(rawId, 0x02, NULL, 0); 
+            } else {
+                Serial.print(F("❌ REJECTED: Discovery packet ignored because bus state is not COLLECTING_REPLIES\n"));
             }
             break;
             
         // 📊 CASE 2: Processing Segmented Data Telemetry Streams
-        case 0x04:
+        case 0x04: {
             if (currentBusState != STATE_OPERATIONAL_MODE) return;
-            if (frame.can_dlc < 3) return; // Ensure countdown indicator exists
             
             uint8_t packetsLeft    = frame.data[2]; 
             uint8_t dataBytesInMsg = frame.can_dlc - 3; 
             
-            // Step A: Initialize tracker state on initial segment entry
             if (!session.inProgress) {
                 session.bytesWritten = 0;
                 session.expectedNextCount = packetsLeft;
                 session.inProgress = true;
             } 
-            // 🚨 Step B: Identify and trap broken segment progressions (EMI Protection)
             else if (packetsLeft != session.expectedNextCount) {
                 if (session.retryCounter < MAX_RETRIES_ALLOWED) {
                     session.retryCounter++;
-                    session.inProgress = false; // Reset broken window buffer state
-                    
-                    Serial.print(F("[Protocol Recovery] Gap detected on Node "));
-                    Serial.print(rawId);
-                    Serial.print(F(". Issuing NACK Retry #"));
-                    Serial.println(session.retryCounter);
-                    
-                    // 🚀 Execute Active ARQ Correction request loop
+                    session.inProgress = false; 
                     uint8_t dummy = 0;
                     sendCommand(rawId, CMD_REQ_RESEND, &dummy, 0);
-                } 
-                else {
-                    // 🛑 Exceeded retry window ceiling limit. Stop traffic generation.
+                } else {
                     session.inProgress = false;
                     session.retryCounter = 0; 
-                    
-                    NodeRegistry::updateNodeError(rawId, 0x04); // Flag telemetry loss context
-                    
-                    Serial.print(F("[CRITICAL FAULT] Node "));
-                    Serial.print(rawId); // ✅ Bug Fixed: Replaced compilation breaker .define()
-                    Serial.println(F(" failed retransmission bounds. Tagging Comms Error."));
+                    NodeRegistry::updateNodeError(rawId, 0x04); 
                 }
                 return;
             }
             
-            // Step C: Push bytes into structural segment buffer array
             for (uint8_t i = 0; i < dataBytesInMsg; i++) {
                 if (session.bytesWritten < 32) {
                     session.rawPayload[session.bytesWritten] = frame.data[3 + i];
@@ -157,15 +157,12 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 }
             }
             
-            // Step D: Calculate step validation target counts
             if (packetsLeft > 0) {
                 session.expectedNextCount--; 
             } 
-            // Step E: Target Zero Hit! Sequence execution complete. Unpack database numbers.
             else {
-                // 🎉 Final segment received successfully!
                 session.inProgress = false; 
-                session.retryCounter = 0; 
+                session.retryCounter = 0;
                 
                 // 🕵️‍♂️ Step 1: Query the Thread-Safe Registry to find out who this node is
                 LMPDataRecord nodeInfo;
@@ -183,8 +180,9 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                         // 🌡️ GROUP 1: Thermal & Humidity Monitoring Panel
                         // Payload Expectation: [ObjHigh, ObjLow, AmbHigh, AmbLow, HumRaw]
                         // ==========================================================
-                        case 1: 
-                            if (session.bytesWritten >= 5) {
+                        case 1: {
+                            // if (session.bytesWritten >= 5) {
+                                
                                 int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
                                 int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
                                 uint8_t rawHum = session.rawPayload[4];
@@ -194,8 +192,10 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                                 float humidity    = rawHum / 2.0f;  // Scale applied
                                 
                                 NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
-                            }
-                            break;
+                                Serial.print(F("[CAN Diagnostic] Telemetry updated for Node "));
+                            Serial.println(rawId);
+                            // }
+                            break;}
                             
                         // ==========================================================
                         // 🎚️ GROUP 2: High-Density Digital Actuator / Relay Status Panel
@@ -238,7 +238,7 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 }
             }
             break;
-            
+        }   
         default:
             break;
     }

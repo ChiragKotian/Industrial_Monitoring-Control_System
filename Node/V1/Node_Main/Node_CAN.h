@@ -19,7 +19,7 @@ private:
     static MCP2515 mcp2515;
     static NetworkState currentBusState;
     
-    static void parseIncomingFrame(struct can_frame& frame);
+    
 
 public:
     static void init();
@@ -28,6 +28,7 @@ public:
     static void broadcastEndCycle();
     static void sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payload, uint8_t dlc);
     
+    static void parseIncomingFrame(struct can_frame& frame);
     // The main execution loops running inside FreeRTOS Task Wrappers
     static void runNetworkWorker(void* pvParameters);
 };
