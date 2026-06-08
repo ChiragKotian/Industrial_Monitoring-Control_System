@@ -1,5 +1,6 @@
 #include "Node_UI.h"
 #include "Node_Registry.h"
+#include "Node_Storage.h"
 
 // 📦 Define an internal event structure for the HMI event queue
 enum HmiEventType {
@@ -99,6 +100,12 @@ void NodeUI::renderHeader(){
  * Loops through active nodes showing live object values without operator interaction.
  */
 void NodeUI::drawAutoDashboard() {
+    static uint32_t lastDisplay = 0;
+    // 1. Fixed 10Hz Refresh (100ms)
+    if (millis() - lastDisplay < 100) return; 
+
+    display.clear(); // Only clear once
+
     renderHeader();
     
     uint8_t activeNodes[MAX_NODE_ID];
@@ -158,6 +165,11 @@ void NodeUI::drawAutoDashboard() {
             display.drawString(128, 46, "SYS: OK");
         }
     }
+    if (xSemaphoreTake(NodeStorage::xStorageMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        display.display();
+        xSemaphoreGive(NodeStorage::xStorageMutex);
+    }
+    lastDisplay = millis();
 }
 
 /**

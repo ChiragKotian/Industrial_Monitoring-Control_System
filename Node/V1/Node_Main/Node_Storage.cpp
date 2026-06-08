@@ -1,109 +1,66 @@
 #include "Node_Storage.h"
 
+// 🚀 MANDATORY DEFINITIONS: These allocate physical memory in the ESP32's RAM.
+// Without these lines, the linker (ld.exe) will throw "undefined reference" errors.
 bool NodeStorage::sdAvailable = false;
-static QueueHandle_t xStorageQueue = NULL;
+bool NodeStorage::isSystemReady = false;
+QueueHandle_t NodeStorage::xStorageQueueHandle = NULL;
+SemaphoreHandle_t NodeStorage::xStorageMutex = NULL;
+// Simple RAM buffer - NO complex Queues or Mutexes to avoid crashes
+static String logBuffer = ""; 
 
-// 🔑 Create a completely independent SPI bus instance for the SD Card
-static SPIClass sdSPI(FSPI);
-
+// 1. Initialize the storage module
 void NodeStorage::init() {
-    xStorageQueue = xQueueCreate(30, sizeof(LogPayload));
-    if (xStorageQueue == NULL) return;
-
-
-    // 🚀 FIXED: Map the independent SPI hardware controller to your visible pins
-    sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-
-    // Pass your customized tracking SPI object into the SD mount loop
-    if (!SD.begin(SD_CS, sdSPI)) {
-        Serial.println(F("[Storage Engine] Initialization failed! Check pin connections on 38-41."));
-        sdAvailable = false;
-        return;
-    }
-
-    File file = SD.open("/telemetry.csv", FILE_APPEND);
-    if (file) {
-        if (file.size() == 0) {
-            file.println(F("Timestamp_ms,Node_ID,Group_Type,Parsed_Industrial_Telemetry_Line"));
-        }
-        file.close();
-        sdAvailable = true;
-        Serial.println(F("[Storage Engine] Custom SPI SD Card verified successfully."));
-    }
-}
-
-bool NodeStorage::queueRawRow(uint8_t id, uint8_t group, uint8_t* rawData, uint8_t length) {
-    if (xStorageQueue == NULL || !sdAvailable) return false;
-
-    LogPayload snap;
-    snap.nodeId = id;
-    snap.groupType = group;
-    snap.length = (length > 32) ? 32 : length;
-    snap.timestamp = millis();
+    // Force Queue Creation BEFORE anyone can use it
+    xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
+    configASSERT(xStorageQueueHandle != NULL); // Use the assert to catch issues early
     
-    // Raw copy of byte stream directly into data block queue space
-    memcpy(snap.payloadBytes, rawData, snap.length);
+    xStorageMutex = xSemaphoreCreateMutex();
+    configASSERT(xStorageMutex != NULL);
+    
+    // ... initialize SD ...
+    sdAvailable = true;
+    isSystemReady = true; 
+}
+// Ensure you are inside the NodeStorage:: scope
+void NodeStorage::logStringPacket(const String& csvRow) {
+    if (xStorageQueueHandle == NULL || !sdAvailable) return;
 
-    BaseType_t state = xQueueSend(xStorageQueue, &snap, 0);
-    return (state == pdPASS);
+    StorageLogPacket packet;
+    strncpy(packet.dataRow, csvRow.c_str(), sizeof(packet.dataRow) - 1);
+    packet.dataRow[sizeof(packet.dataRow) - 1] = '\0'; 
+
+    xQueueSend(xStorageQueueHandle, &packet, 0);
 }
 
+// Just add to a string in RAM - super fast, no bus access
 void NodeStorage::runStorageWorker(void* pvParameters) {
-    LogPayload snap;
-
+    StorageLogPacket bufferedPacket;
     for (;;) {
-        if (xQueueReceive(xStorageQueue, &snap, portMAX_DELAY) == pdTRUE) {
-            if (!sdAvailable) continue;
-
-            File file = SD.open("/telemetry.csv", FILE_APPEND);
-            if (file) {
-                // 1. Log system tracking parameters standard across all configurations
-                file.print(snap.timestamp); file.print(',');
-                file.print(snap.nodeId);    file.print(',');
-                file.print(snap.groupType); file.print(',');
-
-                // 2. 🎛️ Dynamic group-based parsing string construction
-                switch (snap.groupType) {
-                    
-                    case 1: { // 🌡️ Thermal Monitoring Group Layout
-                        int16_t rawObj = (snap.payloadBytes[0] << 8) | snap.payloadBytes[1];
-                        int16_t rawAmb = (snap.payloadBytes[2] << 8) | snap.payloadBytes[3];
-                        uint8_t rawHum = snap.payloadBytes[4];
-                        
-                        float objectTemp = rawObj / 10.0f;
-                        float ambientTemp = rawAmb / 10.0f;
-                        float humidity    = rawHum / 2.0f;
-                        
-                        file.print(F("OBJ_T:")); file.print(objectTemp, 1); file.print(F(";"));
-                        file.print(F("AMB_T:")); file.print(ambientTemp, 1); file.print(F(";"));
-                        file.print(F("HUM:"));   file.print(humidity, 1);
-                        break;
-                    }
-                    
-                    case 2: { // 🎚️ Relay Status / Digital Actuator Group Layout
-                        uint8_t switchMask = snap.payloadBytes[0];
-                        uint8_t breakerFb  = snap.payloadBytes[1];
-                        uint8_t interlock  = snap.payloadBytes[2];
-                        
-                        // Output cleanly formatted raw hex status indicators directly without scaling factors
-                        file.print(F("SW_MASK:0x")); file.print(switchMask, HEX); file.print(F(";"));
-                        file.print(F("BKR_FB:0x"));  file.print(breakerFb, HEX);  file.print(F(";"));
-                        file.print(F("INTLK:0x"));   file.print(interlock, HEX);
-                        break;
-                    }
-
-                    default: // 📈 Unmapped/Future Expansion fallback formatting dump
-                        file.print(F("RAW_HEX:"));
-                        for(uint8_t i = 0; i < snap.length; i++) {
-                            file.print(snap.payloadBytes[i], HEX);
-                            file.print(' ');
-                        }
-                        break;
-                }
+        if (xQueueReceive(xStorageQueueHandle, &bufferedPacket, portMAX_DELAY) == pdTRUE) {
+            
+            // 🛡️ THE GLOBAL LOCK
+            // We use the Mutex to stop the entire CAN engine from 
+            // even *thinking* about SPI while we write.
+            if (xSemaphoreTake(xStorageMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
                 
-                file.println(); // Terminate row sequence line entry
-                file.close();
+                // FORCE: Re-init the bus every single write cycle 
+                // This is the only way to recover if the card disconnected
+                SPI.end(); 
+                SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+                
+                if (SD.begin(SD_CS, SPI)) {
+                    File runtimeFile = SD.open("/telemetry.csv", FILE_APPEND);
+                    if (runtimeFile) {
+                        runtimeFile.print(bufferedPacket.dataRow);
+                        runtimeFile.flush();
+                        runtimeFile.close();
+                        Serial.println(F("[Storage Engine] Write Success."));
+                    }
+                }
+                xSemaphoreGive(xStorageMutex); 
             }
+            vTaskDelay(pdMS_TO_TICKS(200)); // Crucial cool-down for the SD card hardware
         }
     }
 }

@@ -26,17 +26,28 @@ void setup() {
         while (1);
     }
     Serial.println(F("[SYSTEM] Mutex Guard Engine Online."));
+    
+    // 4. Initialize background producer-consumer file structure logging queues
+    NodeStorage::init();
 
-    // 2. Initialize physical display and mount input mapping ISR hooks
-    NodeUI::init();
 
     // 3. Configure physical SPI lines and MCP2515 registers
     NodeCAN::init();
 
-    // 4. Initialize background producer-consumer file structure logging queues
-    NodeStorage::init();
+    // 2. Initialize physical display and mount input mapping ISR hooks
+    NodeUI::init();
+
+    
+
+    
 
     Serial.println(F("[SYSTEM] Spawning Pinned Core Threads..."));
+
+    if (NodeStorage::sdAvailable) {
+        xTaskCreatePinnedToCore(NodeStorage::runStorageWorker, "Storage", 4096, NULL, 2, NULL, 0);
+    } else {
+        Serial.println(F("[Critical] Storage init failed. Check wiring."));
+    }
 
     // 🏎️ CORE 1 REAL-TIME PROTOCOL STACK
     xTaskCreatePinnedToCore(
@@ -61,15 +72,7 @@ void setup() {
     );
 
     // 💾 CORE 0 BACKGROUND FILE WRITING PIPELINE CONSUMER
-    xTaskCreatePinnedToCore(
-        NodeStorage::runStorageWorker,
-        "SD_STORAGE_TASK",
-        4096,
-        NULL,
-        PRIORITY_SD,
-        &xStorageTaskHandle,
-        0 // Executed on background Core 0
-    );
+    
 
     // 🧪 THE HACKATHON TESTBED SANDBOX INTERACTION TASK
     // This script will bypass physical wires and inject raw mock packets straight 
@@ -180,6 +183,6 @@ void vSandboxTestTask(void* pvParameters) {
         Serial.println(F("[Sandbox] Injecting Group 3 Dual-Zone Target (Node 50 Fragment 2)..."));
         NodeCAN::parseIncomingFrame(g3_frag2);
         
-        vTaskDelay(pdMS_TO_TICKS(2000)); // Sleep before recycling the loop
+        vTaskDelay(pdMS_TO_TICKS(4000)); // Sleep before recycling the loop
     }
 }
