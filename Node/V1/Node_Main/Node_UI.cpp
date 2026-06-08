@@ -128,16 +128,30 @@ void NodeUI::drawAutoDashboard() {
         display.drawString(128, 15, "GRP: " + String(snapshot.groupType));
         display.setTextAlignment(TEXT_ALIGN_LEFT);
         
-        // 🎛️ DYNAMIC PROFILE RENDERING MATRIX
+        // 🎛️ DYNAMIC REFINERY PROFILE GRAPHICS MATRIX
         if (snapshot.groupType == 1) { 
-            // 🌡️ Profile 1: Analog Thermal Metric Quantizations
-            display.drawString(0, 34, "Obj T: " + String(snapshot.objectTemp1, 1) + " C");
-            display.drawString(0, 46, "Amb T: " + String(snapshot.ambientTemp, 1) + " C");
+            // Group 1: Single IR Panel view
+            display.drawString(0, 32, "IR Probe 1: " + String(snapshot.objectTemp1, 1) + " C");
+            display.drawString(0, 46, "Case Amb:   " + String(snapshot.ambientTemp, 1) + " C");
             display.setTextAlignment(TEXT_ALIGN_RIGHT);
-            display.drawString(128, 46, "RH: " + String(snapshot.humidity, 0) + "%");
+            display.drawString(128, 46, "SNG-IR");
         } 
         else if (snapshot.groupType == 2) { 
-            // 🎚️ Profile 2: Discrete State Flags for Relay Control Panels
+            // Group 2: IR + High-Precision Environmental Probe
+            display.drawString(0, 32, "IR Target:  " + String(snapshot.objectTemp1, 1) + " C");
+            display.drawString(0, 46, "Prec Amb:   " + String(snapshot.ambientTemp, 1) + " C");
+            display.setTextAlignment(TEXT_ALIGN_RIGHT);
+            display.drawString(128, 46, "RH: " + String(snapshot.humidity, 0) + "%");
+        }
+        else if (snapshot.groupType == 3) {
+            // Group 3: Dual-Zone Transformer/Busbar Differential
+            display.drawString(0, 24, "Phase A T:  " + String(snapshot.objectTemp1, 1) + " C");
+            display.drawString(0, 36, "Phase B T:  " + String(snapshot.objectTemp2, 1) + " C");
+            display.drawString(0, 48, "Shared Amb: " + String(snapshot.ambientTemp, 1) + " C");
+            display.setTextAlignment(TEXT_ALIGN_RIGHT);
+            display.drawString(128, 48, "DUAL-IR");
+        }
+        else if (snapshot.groupType == 4) { 
             display.drawString(0, 34, "VCB Breaker: CLOSED");
             display.drawString(0, 46, "Aux Fan 1:   RUNNING");
             display.setTextAlignment(TEXT_ALIGN_RIGHT);

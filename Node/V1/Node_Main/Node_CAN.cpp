@@ -177,54 +177,107 @@ uint32_t rawId = frame.can_id;
                     switch (nodeInfo.groupType) {
                         
                         // ==========================================================
-                        // 🌡️ GROUP 1: Thermal & Humidity Monitoring Panel
-                        // Payload Expectation: [ObjHigh, ObjLow, AmbHigh, AmbLow, HumRaw]
+                        // 🌡️ GROUP 1: Single Infrared Subsystem Panel
+                        // Expected buffer size: 4 bytes -> [ObjHigh, ObjLow, AmbHigh, AmbLow]
                         // ==========================================================
                         case 1: {
-                            // if (session.bytesWritten >= 5) {
+                            if (session.bytesWritten >= 4) {
+                                int16_t rawObj  = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                                int16_t rawAmb  = (session.rawPayload[2] << 8) | session.rawPayload[3];
                                 
-                                int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
-                                int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
-                                uint8_t rawHum = session.rawPayload[4];
+                                float objectTemp1 = rawObj / 10.0f;
+                                float ambientTemp = rawAmb / 10.0f;
                                 
-                                float objectTemp1 = rawObj / 10.0f; // Scale applied
-                                float ambientTemp = rawAmb / 10.0f; // Scale applied
-                                float humidity    = rawHum / 2.0f;  // Scale applied
+                                // Group 1 does not possess a secondary IR target or a humidity sensor (defaults to 0.0f)
+                                NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, 0.0f);
+                                
+                                Serial.print(F("[Unified Parser] GRP 1 Node "));
+                                Serial.print(rawId);
+                                Serial.print(F(" -> Obj1: ")); Serial.print(objectTemp1, 1);
+                                Serial.print(F("C | Amb: ")); Serial.print(ambientTemp, 1);
+                                Serial.println(F("C"));
+                            }
+                            break;
+                        }
+
+                        // ==========================================================
+                        // 🌡️ GROUP 2: Infrared + Environmental Subsystem (Bench Setup)
+                        // Expected buffer size: 5 bytes -> [ObjHigh, ObjLow, AmbHigh, AmbLow, HumRaw]
+                        // ==========================================================
+                        case 2: {
+                            if (session.bytesWritten >= 5) {
+                                int16_t rawObj  = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                                int16_t rawAmb  = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                                uint8_t rawHum  = session.rawPayload[4];
+                                
+                                float objectTemp1 = rawObj / 10.0f;
+                                float ambientTemp = rawAmb / 10.0f;
+                                float humidity    = rawHum / 2.0f; 
                                 
                                 NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
-                                Serial.print(F("[CAN Diagnostic] Telemetry updated for Node "));
-                            Serial.println(rawId);
-                            // }
-                            break;}
+                                
+                                Serial.print(F("[Unified Parser] GRP 2 Node "));
+                                Serial.print(rawId);
+                                Serial.print(F(" -> Obj1: ")); Serial.print(objectTemp1, 1);
+                                Serial.print(F("C | Amb: ")); Serial.print(ambientTemp, 1);
+                                Serial.print(F("C | Hum: ")); Serial.print(humidity, 1);
+                                Serial.println(F("%"));
+                            }
+                            break;
+                        }
                             
                         // ==========================================================
-                        // 🎚️ GROUP 2: High-Density Digital Actuator / Relay Status Panel
-                        // Payload Expectation: 5 Raw Bytes containing discrete status indicators (No multipliers)
+                        // 🌡️ GROUP 3: Dual-Zone Infrared Subsystem Panel
+                        // Expected buffer size: 6 bytes -> [Obj1H, Obj1L, Obj2H, Obj2L, AmbH, AmbL]
                         // ==========================================================
-                        case 2:
+                        case 3: {
+                            if (session.bytesWritten >= 6) {
+                                int16_t rawObj1 = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                                int16_t rawObj2 = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                                int16_t rawAmb  = (session.rawPayload[4] << 8) | session.rawPayload[5];
+                                
+                                float objectTemp1 = rawObj1 / 10.0f;
+                                float objectTemp2 = rawObj2 / 10.0f;
+                                float ambientTemp = rawAmb  / 10.0f;
+                                
+                                // Pass both physical object temperatures safely to the registry memory slots
+                                NodeRegistry::updateTelemetry(rawId, objectTemp1, objectTemp2, ambientTemp, 0.0f);
+                                
+                                Serial.print(F("[Unified Parser] GRP 3 Node "));
+                                Serial.print(rawId);
+                                Serial.print(F(" -> Obj1: ")); Serial.print(objectTemp1, 1);
+                                Serial.print(F("C | Obj2: ")); Serial.print(objectTemp2, 1);
+                                Serial.print(F("C | Amb: ")); Serial.print(ambientTemp, 1);
+                                Serial.println(F("C"));
+                            }
+                            break;
+                        }
+                            
+                        // ==========================================================
+                        // 🎚️ GROUP 4: Actuator & Relay Control Status Panel
+                        // ==========================================================
+                        case 4: {
                             if (session.bytesWritten >= 5) {
-                                // Extract bytes directly as whole integers, bitmasks, or flags without division
                                 uint8_t switchStatusMask = session.rawPayload[0]; 
                                 uint8_t breakerFeedback  = session.rawPayload[1];
                                 uint8_t interlockState   = session.rawPayload[2];
                                 uint8_t warningRegister  = session.rawPayload[3];
                                 uint8_t localCounter     = session.rawPayload[4];
                                 
-                                // Process raw numbers directly into custom registry slots or error bitmasks
                                 NodeRegistry::updateNodeError(rawId, warningRegister);
                                 
-                                // (For example, we can store discrete statuses inside unused parameters or log them)
-                                Serial.print(F("[Group 2 Parser] Node "));
+                                Serial.print(F("[Unified Parser] GRP 4 Node "));
                                 Serial.print(rawId);
-                                Serial.print(F(" Raw Feedback Register: 0x"));
+                                Serial.print(F(" Switch mask: 0x"));
                                 Serial.println(switchStatusMask, HEX);
                             }
                             break;
+                        }
                             
                         // ==========================================================
-                        // 📈 GROUP 3: Future Expansion (e.g., Vibration / Current Transformers)
+                        // 📈 GROUP 5: Future Expansion (e.g., Vibration / Current Transformers)
                         // ==========================================================
-                        case 3:
+                        case 5:
                             // Future engineers can drop their specialized conversion math right here
                             break;
                             
