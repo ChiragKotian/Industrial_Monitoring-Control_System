@@ -2,23 +2,32 @@
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
 
-// FIX: The Adafruit library constructor takes 0 arguments at global scope.
-// The custom I2C addresses are passed to the .begin() function inside setup instead!
-static Adafruit_MLX90614 mlxPrimary;   // Standard instantiation for primary tracking
-static Adafruit_MLX90614 mlxSecondary; // Standard instantiation for dual-zone tracking
+static Adafruit_MLX90614 mlxPrimary;   
+static Adafruit_MLX90614 mlxSecondary; 
+
+// Internal helper to verify I2C physical connection before querying
+bool checkI2CAddress(uint8_t address) {
+    Wire.beginTransmission(address);
+    return (Wire.endTransmission() == 0);
+}
 
 bool MLX_sens::initMLX(uint8_t addr) {
     bool setupSuccess = false;
+    
+    if (!checkI2CAddress(addr)) {
+        Serial.print(F("🚨 MLX90614 Hardware MISSING at 0x"));
+        Serial.println(addr, HEX);
+        return false; // Fast fail, prevents locking
+    }
 
-    // Route the explicit address runtime configurations straight to the initialization calls
     if (addr == 0x5A) {
-        setupSuccess = mlxPrimary.begin(0x5A); // Pass address parameter here!
+        setupSuccess = mlxPrimary.begin(0x5A); 
     } else if (addr == 0x5B) {
-        setupSuccess = mlxSecondary.begin(0x5B); // Pass address parameter here!
+        setupSuccess = mlxSecondary.begin(0x5B); 
     }
 
     if (!setupSuccess) {
-        Serial.print(F("🚨 MLX90614 Driver: Chip handshake failure on address 0x"));
+        Serial.print(F("🚨 MLX90614 Driver: Logic handshake failure at 0x"));
         Serial.println(addr, HEX);
         return false;
     }
@@ -26,6 +35,14 @@ bool MLX_sens::initMLX(uint8_t addr) {
 }
 
 void MLX_sens::readMLX(uint8_t addr, float& objOut, float& ambOut, bool& faultOut) {
+    // 🔥 FAULT TOLERANCE: Check if physical wires disconnected mid-operation
+    if (!checkI2CAddress(addr)) {
+        faultOut = true;
+        objOut = 0.0f;
+        ambOut = 0.0f;
+        return;
+    }
+
     if (addr == 0x5A) {
         objOut = mlxPrimary.readObjectTempC();
         ambOut = mlxPrimary.readAmbientTempC();
@@ -37,17 +54,13 @@ void MLX_sens::readMLX(uint8_t addr, float& objOut, float& ambOut, bool& faultOu
         return;
     }
 
-    // Rugged Verification Bounds: Trap library failures (NaN) or operational boundaries
+    // Trap library software failures (NaN)
     if (isnan(objOut) || isnan(ambOut) || objOut < -70.0f || objOut > 380.0f) {
         faultOut = true;
-        objOut = 0.0f; // Force safe defaults to safeguard fixed-point quantization math
+        objOut = 0.0f; 
         ambOut = 0.0f;
-        Serial.print(F("⚠️ ALERT: MLX90614 Sensor Malfunction / Frame Loss at 0x"));
-        Serial.println(addr, HEX);
     } else {
         faultOut = false;
-
-        // Diagnostic verification check for high-temperature switchgear spaces
         if (ambOut >= 80.0f) {
             Serial.print(F("⚠️ CRITICAL ALERT: Casing Ambience Reaching Thermal Bounds: "));
             Serial.print(ambOut);

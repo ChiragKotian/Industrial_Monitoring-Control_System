@@ -59,7 +59,7 @@ void NodeUI::init() {
     // A. Supply power to the OLED panel regulator via the Vext Rail
     pinMode(Vext, OUTPUT);
     digitalWrite(Vext, LOW); // LOW turns on the MOSFET switch to supply 3.3V
-    delay(100);            // Crucial stabilization window for voltage lines
+    delay(100);              // Crucial stabilization window for voltage lines
 
     // 2. Wake up local Heltec physical display panel
     display.init();
@@ -100,12 +100,6 @@ void NodeUI::renderHeader(){
  * Loops through active nodes showing live object values without operator interaction.
  */
 void NodeUI::drawAutoDashboard() {
-    static uint32_t lastDisplay = 0;
-    // 1. Fixed 10Hz Refresh (100ms)
-    if (millis() - lastDisplay < 100) return; 
-
-    display.clear(); // Only clear once
-
     renderHeader();
     
     uint8_t activeNodes[MAX_NODE_ID];
@@ -165,11 +159,6 @@ void NodeUI::drawAutoDashboard() {
             display.drawString(128, 46, "SYS: OK");
         }
     }
-    if (xSemaphoreTake(NodeStorage::xStorageMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        display.display();
-        xSemaphoreGive(NodeStorage::xStorageMutex);
-    }
-    lastDisplay = millis();
 }
 
 /**
@@ -214,21 +203,6 @@ void NodeUI::handleButtonPush(uint8_t buttonId, bool isLongPress) {
             activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
         }
     }
-    
-    // Example rules for changing nodes while viewing the Deep Dive screen
-    // if (activeMenuState == MENU_DEVICE_DEEP_DIVE) {
-    //     uint8_t activeNodes[MAX_NODE_ID];
-    //     uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-        
-    //     if (totalFound > 0) {
-    //         if (buttonId == 1) { // Up Pin increment mapping
-    //             selectedDeviceIndex = (selectedDeviceIndex + 1) % totalFound;
-    //         }
-    //         if (buttonId == 2) { // Down Pin decrement mapping
-    //             selectedDeviceIndex = (selectedDeviceIndex + totalFound - 1) % totalFound;
-    //         }
-    //     }
-    // }
 }
 
 /**
