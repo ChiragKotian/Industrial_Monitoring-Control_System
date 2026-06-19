@@ -2,9 +2,13 @@
 #include "Node_Registry.h"
 #include "Node_Storage.h"
 
+// 📦 Protocol Definition Layer
+#define DATA_STREAM         0x04
 #define CMD_REQ_RESEND      0x05
+#define CMD_REQ_DIAG        0x06
 #define MAX_RETRIES_ALLOWED 3
 
+// Staging footprint structure for fragmented multi-frame assembly 
 struct LMPAssemblyBuffer {
     uint8_t  rawPayload[32];       
     uint8_t  bytesWritten;         
@@ -15,19 +19,22 @@ struct LMPAssemblyBuffer {
 
 static LMPAssemblyBuffer assemblyLine[MAX_NODE_ID + 1];
 
+// 🔌 Static Member Variables Instantiation
+uint32_t NodeCAN::currentPollingInterval = 1000; 
+uint32_t NodeCAN::discoveryStartTime = 0; 
+uint8_t NodeCAN::activeDiagnosticNode = 0; // 🎯 Tracks UI focus state
+
 SPIClass NodeCAN::hspiCAN(HSPI); 
-MCP2515 NodeCAN::mcp2515(CAN_CS, 10000000, &hspiCAN); // Enforce the correct constructor!
+MCP2515 NodeCAN::mcp2515(CAN_CS, 10000000, &hspiCAN);
 NetworkState NodeCAN::currentBusState = STATE_STANDBY;
 
 void NodeCAN::init() {
     hspiCAN.begin(CAN_SCK, CAN_MISO, CAN_MOSI, CAN_CS);
-    
     mcp2515.reset();
-    mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ); // Ensure LMP matches this EXACTLY
+    mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ); 
     mcp2515.setNormalMode();
-    
     currentBusState = STATE_STANDBY;
-    Serial.println(F("[CAN Engine] MCP2515 Hardware Initialized Successfully."));
+    Serial.println(F("[CAN Engine] MCP2515 Hardware Online (250KBPS). Normal Mode Locked."));
 }
 
 void NodeCAN::startDiscoveryCycle() {
@@ -42,57 +49,63 @@ void NodeCAN::sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payl
     txFrame.data[1] = instructionId; 
     
     for(uint8_t i = 0; i < dlc; i++) {
-        if((2 + i) < 8) {
-            txFrame.data[2 + i] = payload[i];
-        }
+        if((2 + i) < 8) txFrame.data[2 + i] = payload[i];
     }
     mcp2515.sendMessage(&txFrame);
 }
 
 void NodeCAN::broadcastEndCycle() {
-    sendCommand(0x00, 0x02, NULL, 0);
-    Serial.println(F("[CAN Engine] Operational mode broadcast transmitted to network."));
+    sendCommand(0x00, 0x02, NULL, 0); 
+    Serial.println(F("[CAN Engine] Broadcasted End-of-Cycle (0x02) to Network."));
+}
+
+void NodeCAN::requestFreshDiagnostics(uint8_t targetLmpId) {
+    sendCommand(targetLmpId, CMD_REQ_DIAG, NULL, 0);
+    Serial.print(F("[CAN Engine] Force-Polled Diagnostic Byte from Node ID: "));
+    Serial.println(targetLmpId);
 }
 
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
     uint32_t rawId = frame.can_id; 
     
     if (rawId < 1 || rawId > MAX_NODE_ID) return;
+    if (frame.can_dlc < 3) return; 
     
-    // ALLOW target 0x00 (Broadcast Responses) but reject malformed payloads
-    if (frame.can_dlc < 3) return;
-    
-    uint8_t instructionId  = frame.data[1]; 
+    uint8_t instructionId = frame.data[1]; 
     LMPAssemblyBuffer& session = assemblyLine[rawId];
 
     switch (instructionId) {
-        case 0x01:
-            Serial.print(F("[CAN Diagnostic] Discovery Packet from Node: ")); Serial.println(rawId);
-            
-            // 🔥 THE FIX: Accept registrations during both the Pulsing and Listening phases!
-            if (currentBusState == STATE_COLLECTING_REPLIES || currentBusState == STATE_INIT_DISCOVERY) {
+        
+        case 0x01: 
+            if (currentBusState == STATE_COLLECTING_REPLIES || 
+                currentBusState == STATE_INIT_DISCOVERY || 
+                currentBusState == STATE_RECHECK_WINDOW) {
                 
                 uint8_t groupType = frame.data[3]; 
                 
-                // Only print the SUCCESS banner once per node to keep logs clean
                 uint8_t activeNodes[MAX_NODE_ID];
                 uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
                 bool alreadyRegistered = false;
-                for(int i=0; i<totalFound; i++) {
+                
+                for(int i = 0; i < totalFound; i++) {
                     if (activeNodes[i] == rawId) alreadyRegistered = true;
                 }
 
                 if (!alreadyRegistered) {
                     NodeRegistry::registerNode(rawId, groupType);
-                    Serial.print(F("🎉 SUCCESS: Node ")); Serial.print(rawId);
-                    Serial.print(F(" registered into Group ")); Serial.println(groupType);
+                    Serial.print(F("🎉 DISCOVERED: Node ")); Serial.print(rawId);
+                    Serial.print(F(" mapped into Group ")); Serial.println(groupType);
                 }
             }
             break;
             
-        case 0x04: {
-            if (currentBusState != STATE_OPERATIONAL_MODE) return;
-            
+        case DATA_STREAM: 
+        case 0x09: { 
+            if (instructionId == 0x09) {
+                Serial.print(F("🚨 EMERGENCY FROM NODE: ")); Serial.println(rawId);
+                NodeRegistry::updateNodeError(rawId, 0xFF); 
+            }
+
             uint8_t packetsLeft    = frame.data[2]; 
             uint8_t dataBytesInMsg = frame.can_dlc - 3; 
             
@@ -101,19 +114,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 session.expectedNextCount = packetsLeft;
                 session.inProgress = true;
             } 
-            else if (packetsLeft != session.expectedNextCount) {
-                if (session.retryCounter < MAX_RETRIES_ALLOWED) {
-                    session.retryCounter++;
-                    session.inProgress = false; 
-                    uint8_t dummy = 0;
-                    sendCommand(rawId, CMD_REQ_RESEND, &dummy, 0);
-                } else {
-                    session.inProgress = false;
-                    session.retryCounter = 0; 
-                    NodeRegistry::updateNodeError(rawId, 0x04); 
-                }
-                return;
-            }
             
             for (uint8_t i = 0; i < dataBytesInMsg; i++) {
                 if (session.bytesWritten < 32) {
@@ -122,48 +122,96 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 }
             }
             
-            if (packetsLeft > 0) {
-                session.expectedNextCount--; 
-            } 
-            else {
-                session.inProgress = false; 
-                session.retryCounter = 0;
-                
+            if (packetsLeft == 0) { 
+                session.inProgress = false;
                 LMPDataRecord nodeInfo;
-                if (NodeRegistry::getNodeSnapshot(rawId, nodeInfo)) {
-                    uint32_t currentRuntimeMs = millis();
-                    String logLine = String(currentRuntimeMs) + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
+                
+                if (!NodeRegistry::getNodeSnapshot(rawId, nodeInfo)) {
+                    uint8_t defaultGroup = (rawId >= 161) ? 4 : 1;
+                    NodeRegistry::registerNode(rawId, defaultGroup);
+                    NodeRegistry::getNodeSnapshot(rawId, nodeInfo);
+                }
 
-                    switch (nodeInfo.groupType) {
-                        case 1: {
-                            if (session.bytesWritten >= 4) {
-                                int16_t rawObj  = (session.rawPayload[0] << 8) | session.rawPayload[1];
-                                int16_t rawAmb  = (session.rawPayload[2] << 8) | session.rawPayload[3];
-                                float objectTemp1 = rawObj / 10.0f;
-                                float ambientTemp = rawAmb / 10.0f;
-                                
-                                NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, 0.0f);
-                                logLine += "OBJ_T1:" + String(objectTemp1, 1) + ";CASE_AMB:" + String(ambientTemp, 1) + "\n";
-                                
-                                if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
-                            }
-                            break;
+                uint32_t currentRuntimeMs = millis();
+                String logLine = String(currentRuntimeMs) + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
+
+                switch (nodeInfo.groupType) {
+                    case 1: { 
+                        if (session.bytesWritten >= 4) {
+                            int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                            int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                            float objectTemp1 = rawObj / 10.0f;
+                            float ambientTemp = rawAmb / 10.0f;
+                            
+                            NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, 0.0f);
+                            logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + "\n";
+                            if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
                         }
-                        // Add Case 2, 3, and 4 here exactly as you had them written...
-                    } 
+                        break;
+                    }
+                    
+                    case 2: { 
+                        if (session.bytesWritten >= 5) {
+                            int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                            int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                            uint8_t rawHum = session.rawPayload[4];
+                            float objectTemp1 = rawObj / 10.0f;
+                            float ambientTemp = rawAmb / 10.0f;
+                            float humidity    = rawHum / 2.0f;
+                            
+                            NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
+                            logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + ";RH:" + String(humidity, 1) + "%\n";
+                            if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                        }
+                        break;
+                    }
+                    
+                    case 3: { 
+                        if (session.bytesWritten >= 6) {
+                            int16_t rawObj1 = (session.rawPayload[0] << 8) | session.rawPayload[1];
+                            int16_t rawObj2 = (session.rawPayload[2] << 8) | session.rawPayload[3];
+                            int16_t rawAmb  = (session.rawPayload[4] << 8) | session.rawPayload[5];
+                            float objectTemp1 = rawObj1 / 10.0f;
+                            float objectTemp2 = rawObj2 / 10.0f;
+                            float ambientTemp = rawAmb / 10.0f;
+                            
+                            NodeRegistry::updateTelemetry(rawId, objectTemp1, objectTemp2, ambientTemp, 0.0f);
+                            logLine += "PHASE_A:" + String(objectTemp1, 1) + ";PHASE_B:" + String(objectTemp2, 1) + ";SHARED_AMB:" + String(ambientTemp, 1) + "\n";
+                            if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                        }
+                        break;
+                    }
+                    
+                    case 4: { 
+                        if (session.bytesWritten >= 1) {
+                            uint8_t switchStatusMask = session.rawPayload[0];
+                            NodeRegistry::updateTelemetry(rawId, 0.0f, 0.0f, 0.0f, 0.0f); 
+                            logLine += "ACTUATOR_MASK:0x" + String(switchStatusMask, HEX) + "\n";
+                            if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                        }
+                        break;
+                    }
                 } 
             } 
             break;
+        } 
+        
+        case CMD_REQ_DIAG: { 
+            uint8_t freshErrorMask = frame.data[2]; 
+            NodeRegistry::updateNodeError(rawId, freshErrorMask);
+            
+            Serial.print(F("[CAN Diagnostic] Fresh Diagnostic Register Sync from Node "));
+            Serial.print(rawId); Serial.print(F(" -> Mask Byte: 0x"));
+            Serial.println(freshErrorMask, HEX);
+            break;
         }
     } 
-} 
+}
 
 void NodeCAN::runNetworkWorker(void* pvParameters) {
     struct can_frame incomingFrame;
-    uint32_t discoveryStartTime = 0;
+    uint32_t recheckStartTime = 0;
     static uint8_t discoveryPulseCount = 0;
-    
-    Serial.println(F("[CAN Task] Engine Live."));
 
     for (;;) { 
         switch (currentBusState) {
@@ -171,45 +219,66 @@ void NodeCAN::runNetworkWorker(void* pvParameters) {
                 break;
                 
             case STATE_INIT_DISCOVERY:
-                // 🚀 PULSE BROADCAST: Send 3 times to ensure LMPs boot in time
-                if (discoveryPulseCount < 3) {
+                discoveryPulseCount = 0;
+                discoveryStartTime = millis(); 
+                Serial.println(F("[CAN Engine] Phase 1/4: Flooding bus with network discovery requests..."));
+                while (discoveryPulseCount < 3) {
                     sendCommand(0x00, 0x01, NULL, 0);
                     discoveryPulseCount++;
-                    vTaskDelay(pdMS_TO_TICKS(500)); 
-                } else {
-                    discoveryStartTime = millis();
-                    currentBusState = STATE_COLLECTING_REPLIES;
-                    Serial.println(F("[CAN Engine] Discovery broadcast finished. Listening..."));
+                    vTaskDelay(pdMS_TO_TICKS(100)); 
                 }
+                currentBusState = STATE_COLLECTING_REPLIES;
                 break;
                 
             case STATE_COLLECTING_REPLIES:
                 if (millis() - discoveryStartTime >= DISCOVERY_WINDOW) {
-                    Serial.println(F("[CAN Engine] Discovery window closed."));
+                    Serial.println(F("[CAN Engine] Phase 2/4 Closed. Shifting to Sequential Ack Validation."));
+                    currentBusState = STATE_SEND_ACK_SEQUENTIAL;
+                }
+                break;
+                
+            case STATE_SEND_ACK_SEQUENTIAL: {
+                uint8_t activeNodes[MAX_NODE_ID];
+                uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+                
+                Serial.print(F("[CAN Engine] Phase 3/4: Issuing unicast confirmations to ")); 
+                Serial.print(totalFound); Serial.println(F(" nodes..."));
+                
+                for (int i = 0; i < totalFound; i++) {
+                    sendCommand(activeNodes[i], 0x01, NULL, 0); 
+                    vTaskDelay(pdMS_TO_TICKS(15)); 
+                }
+                
+                broadcastEndCycle(); 
+                recheckStartTime = millis();
+                currentBusState = STATE_RECHECK_WINDOW;
+                break;
+            }
+                
+            case STATE_RECHECK_WINDOW:
+                if (millis() - recheckStartTime >= 3000) {
+                    Serial.println(F("[CAN Engine] Phase 4/4 Complete: Topology verified stable. Locking Operational Listening."));
                     NodeRegistry::finalizeDiscoveryRegistry();
-                    
-                    // Replaced standard delay(15) from your logic with non-blocking RTOS delay
-                    uint8_t activeNodes[MAX_NODE_ID];
-                    uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-                    for (int i = 0; i < totalFound; i++) {
-                        sendCommand(activeNodes[i], 0, NULL, 0); // Send ACK with 0 payload bytes
-                        vTaskDelay(pdMS_TO_TICKS(15));  // Yield while maintaining pacing
-                    }
-                    
-                    broadcastEndCycle(); 
                     currentBusState = STATE_OPERATIONAL_MODE;
                 }
                 break;
                 
-            case STATE_OPERATIONAL_MODE:
+            case STATE_OPERATIONAL_MODE: {
+                // 🎯 CONTEXT-AWARE POLLING
+                // Only fire 0x06 diagnostic polls if the UI actively designates a target
+                static uint32_t lastFocusedPollTime = 0;
+                
+                if (activeDiagnosticNode > 0 && (millis() - lastFocusedPollTime >= 2000)) {
+                    lastFocusedPollTime = millis();
+                    sendCommand(activeDiagnosticNode, CMD_REQ_DIAG, NULL, 0); 
+                }
                 break;
+            }
         }
 
-        // 📥 PURE HARDWARE RX LAYER (No Mutex Required because SPI is independent)
         if (mcp2515.readMessage(&incomingFrame) == MCP2515::ERROR_OK) {
             parseIncomingFrame(incomingFrame);
         }
-
-        vTaskDelay(pdMS_TO_TICKS(5)); // Clean 5ms yield to prevent watchdog resets
+        vTaskDelay(pdMS_TO_TICKS(2)); 
     }
 }

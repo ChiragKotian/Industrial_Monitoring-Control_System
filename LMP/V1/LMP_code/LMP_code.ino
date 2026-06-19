@@ -77,6 +77,21 @@ void loop() {
                 LMP_Hardware::refresh(); 
                 LMP_Hardware::sendStream(mcp2515, 0x04);
                 break;
+
+            case 0x06: // CMD_REQ_DIAG
+                    // Safely respond to the Master's background round-robin request
+                    struct can_frame txDiag;
+                    txDiag.can_id = LMP_ID;
+                    txDiag.can_dlc = 3;
+                    txDiag.data[0] = 0x00;           
+                    txDiag.data[1] = 0x06;           
+                    txDiag.data[2] = LMP_Hardware::getErrorCode(); 
+                    mcp2515.sendMessage(&txDiag);
+ 
+                    
+                    Serial.print(F("⚙️ Polled diagnostic byte dispatched: 0x"));
+                    Serial.println(txDiag.data[2], HEX);
+                    break;
                 
             default:
                 break;

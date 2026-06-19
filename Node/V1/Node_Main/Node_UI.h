@@ -7,10 +7,11 @@
 #include "Node_Config.h"
 
 enum MenuLevel {
-    MENU_EMERGENCY_OVERLAY = 0,
-    MENU_AUTO_SCROLL_DASHBOARD,
-    MENU_DEVICE_HUB,
+    MENU_WELCOME_SPLASH = 0,    
+    MENU_SCANNING_BUS,          
+    MENU_AUTO_SCROLL_DASHBOARD, 
     MENU_DEVICE_DEEP_DIVE,
+    MENU_DEVICE_DIAGS,          // Diagnostic sub-page level state
     MENU_SYSTEM_SETTINGS
 };
 
@@ -20,17 +21,16 @@ private:
     static MenuLevel activeMenuState;
     static uint8_t selectedDeviceIndex;
     
-    // Rendering Sub-layers
     static void renderHeader();
-    static void drawEmergencyOverlay();
+    static void drawWelcomeSplash();   
+    static void drawScanningPage();    
     static void drawAutoDashboard();
-    static void drawDeviceHubList();
     static void drawDeviceTelemetryPage(uint8_t targetId);
+    static void drawDeviceDiagnosticPage(uint8_t targetId); 
 
 public:
     static void init();
     static void handleButtonPush(uint8_t buttonId, bool isLongPress);
-    
     static void runHMITask(void* pvParameters);
 };
 
