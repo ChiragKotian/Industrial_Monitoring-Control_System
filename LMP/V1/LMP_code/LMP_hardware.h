@@ -15,7 +15,9 @@ public:
     static void init();
     static void refresh();
     
-    // 🚀 NEW: Direct injection stream replaces the old packTelemetry buffer
+    // 🚀 FIXED: Added the declaration so the main loop can access the thermal snapshot
+    static float getCoreObjectTemp(); 
+    
     static void sendStream(MCP2515& canBus, uint8_t opcode); 
     static float getCoreObjectTemp(); // Returns live float reading to background checking registers
     

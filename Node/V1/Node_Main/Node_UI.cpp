@@ -19,6 +19,9 @@ MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
 uint8_t NodeUI::selectedDeviceIndex = 0;
 static uint8_t currentLiveIndex = 0;
 static QueueHandle_t xHmiQueue = NULL;
+// 1. Change the static tracking variables at the top of Node_UI.cpp
+static uint8_t selectedLmpId = 0; // Track the ID directly, not the array index!
+static uint8_t currentLiveId = 0;
 
 static void IRAM_ATTR hmiButtonISR(void* arg) {
     uint32_t pin = (uint32_t)arg;
@@ -46,6 +49,7 @@ void NodeUI::init() {
     display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
     
+    // PRG button is on Pin 0 on the Heltec V3
     uint8_t buttonPins[] = {0}; 
     for(uint8_t pin : buttonPins) {
         pinMode(pin, INPUT_PULLUP);
@@ -67,9 +71,6 @@ void NodeUI::renderHeader(){
     display.drawHorizontalLine(0, 12, 128);
 }
 
-/**
- * @brief 🚀 NEW: Renders Authorship & Splash info while background boots occur
- */
 void NodeUI::drawWelcomeSplash() {
     display.setFont(ArialMT_Plain_16);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
@@ -80,18 +81,14 @@ void NodeUI::drawWelcomeSplash() {
     display.drawString(64, 52, "[CAN Boot Initializing]");
 }
 
-/**
- * @brief 🚀 NEW: Renders precise percentage status of multi-stage network discovery
- */
 void NodeUI::drawScanningPage() {
     renderHeader();
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.setFont(ArialMT_Plain_10);
     display.drawString(64, 16, "SCANNING FIELD BUS...");
     
-    // Calculate accurate completion bar math using exposed timestamp
     uint32_t elapsed = millis() - NodeCAN::discoveryStartTime;
-    uint32_t totalExpectedWindow = DISCOVERY_WINDOW + 3500; // Combined window pacing
+    uint32_t totalExpectedWindow = DISCOVERY_WINDOW + 3500; 
     uint8_t percentage = (elapsed * 100) / totalExpectedWindow;
     if (percentage > 100) percentage = 100;
     
@@ -110,13 +107,14 @@ void NodeUI::drawAutoDashboard() {
     
     if (totalFound == 0) {
         display.setTextAlignment(TEXT_ALIGN_CENTER);
-        display.setFont(ArialMT_Plain_10);
         display.drawString(64, 30, "[ NO DEVICES ONLINE ]");
         return;
     }
     
     uint32_t activeIndex = (millis() / 3000) % totalFound; 
-    currentLiveIndex = activeIndex;
+    
+    // Track the actual Node ID currently on the screen
+    currentLiveId = activeNodes[activeIndex]; 
     uint8_t currentLmpId = activeNodes[activeIndex];
     
     LMPDataRecord snapshot;
@@ -180,49 +178,62 @@ void NodeUI::drawDeviceTelemetryPage(uint8_t targetId) {
     }
 }
 
+/**
+ * @brief 🚀 THE NEW RAW BINARY DIAGNOSTICS PAGE
+ */
 void NodeUI::drawDeviceDiagnosticPage(uint8_t targetId) {
     renderHeader();
     LMPDataRecord snapshot;
+    
     if (!NodeRegistry::getNodeSnapshot(targetId, snapshot)) {
         display.setTextAlignment(TEXT_ALIGN_CENTER);
         display.drawString(64, 32, "NODE OFFLINE");
         return;
     }
     
+    // Top Title
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 14, "DIAGS -> NODE " + String(targetId));
-    display.drawString(0, 28, "Pacing: " + String(NodeCAN::currentPollingInterval) + " ms");
     
-    // Direct Hex Code layout output maps to maximize readability bounds
-    display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    display.drawString(128, 14, "FLG: 0x" + String(snapshot.errorCode, HEX));
+    // Center: Draw the raw Binary Error Mask
+    display.setFont(ArialMT_Plain_16);
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
     
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawHorizontalLine(0, 42, 128);
+    // Convert the 8-bit byte into a readable 00000000 string
+    String binaryString = "";
+    for (int i = 7; i >= 0; i--) {
+        binaryString += (snapshot.errorCode & (1 << i)) ? "1" : "0";
+    }
     
-    // Concise bit tracking output strings layout row matrix
-    String bitStatus = "B0(IR): " + String((snapshot.errorCode & (1 << 0)) ? "ERR" : "OK") + 
-                       " | B2(ENV): " + String((snapshot.errorCode & (1 << 2)) ? "ERR" : "OK");
-    display.drawString(0, 48, bitStatus);
+    // Display the 8-bit binary format right in the middle
+    display.drawString(64, 30, binaryString);
+    
+    // Bottom: Display the HEX code equivalent for engineers
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(64, 50, "HEX VALUE: 0x" + String(snapshot.errorCode, HEX));
 }
 
 void NodeUI::handleButtonPush(uint8_t buttonId, bool isLongPress) {
     if (buttonId == 0) { 
         if (activeMenuState == MENU_AUTO_SCROLL_DASHBOARD) {
             activeMenuState = MENU_DEVICE_DEEP_DIVE;
-            selectedDeviceIndex = currentLiveIndex; 
+            selectedLmpId = currentLiveId; 
         } 
         else if (activeMenuState == MENU_DEVICE_DEEP_DIVE) {
             activeMenuState = MENU_DEVICE_DIAGS;
-            uint8_t activeNodes[MAX_NODE_ID];
-            uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-            if (totalFound > 0 && selectedDeviceIndex < totalFound) {
-                NodeCAN::requestFreshDiagnostics(activeNodes[selectedDeviceIndex]);
-            }
+            
+            // 🎯 START FOCUSED POLLING: Tell CAN Engine to poll this node every 2s
+            NodeCAN::activeDiagnosticNode = selectedLmpId;
+            
+            // Fire the very first request instantly so the user doesn't wait 2 seconds
+            NodeCAN::requestFreshDiagnostics(selectedLmpId); 
         } 
         else if (activeMenuState == MENU_DEVICE_DIAGS) {
             activeMenuState = MENU_AUTO_SCROLL_DASHBOARD; 
+            
+            // 🛑 STOP FOCUSED POLLING: Free up the CAN bus bandwidth
+            NodeCAN::activeDiagnosticNode = 0;
         }
     }
 }
@@ -242,8 +253,8 @@ void NodeUI::runHMITask(void* pvParameters) {
             xLastWakeTime = xTaskGetTickCount();
             display.clear();
             
-            // 📥 HARNESS HUD DRIVER STATES DIRECTLY TO NETWORK FIELD STATES
             NetworkState busState = NodeCAN::getBusState();
+            
             if (activeMenuState != MENU_DEVICE_DEEP_DIVE && activeMenuState != MENU_DEVICE_DIAGS) {
                 if (busState == STATE_STANDBY || busState == STATE_INIT_DISCOVERY) {
                     activeMenuState = MENU_WELCOME_SPLASH;
@@ -253,6 +264,13 @@ void NodeUI::runHMITask(void* pvParameters) {
                     if (activeMenuState == MENU_WELCOME_SPLASH || activeMenuState == MENU_SCANNING_BUS) {
                         activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
                     }
+                }
+            } else {
+                // 🛡️ HARDWARE SAFEGUARD: If the network drops while looking at diagnostics,
+                // safely kick the user out and stop the targeted polling immediately.
+                if (busState != STATE_OPERATIONAL_MODE) {
+                     activeMenuState = MENU_SCANNING_BUS;
+                     NodeCAN::activeDiagnosticNode = 0; 
                 }
             }
             
@@ -267,23 +285,11 @@ void NodeUI::runHMITask(void* pvParameters) {
                     drawAutoDashboard();
                     break;
                 case MENU_DEVICE_DEEP_DIVE: {
-                    uint8_t activeNodes[MAX_NODE_ID];
-                    uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-                    if (totalFound > 0 && selectedDeviceIndex < totalFound) {
-                        drawDeviceTelemetryPage(activeNodes[selectedDeviceIndex]);
-                    } else {
-                        activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
-                    }
+                    drawDeviceTelemetryPage(selectedLmpId);
                     break;
                 }
                 case MENU_DEVICE_DIAGS: { 
-                    uint8_t activeNodes[MAX_NODE_ID];
-                    uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-                    if (totalFound > 0 && selectedDeviceIndex < totalFound) {
-                        drawDeviceDiagnosticPage(activeNodes[selectedDeviceIndex]);
-                    } else {
-                        activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
-                    }
+                    drawDeviceDiagnosticPage(selectedLmpId);
                     break;
                 }
                 default:

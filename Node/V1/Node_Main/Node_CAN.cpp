@@ -2,11 +2,13 @@
 #include "Node_Registry.h"
 #include "Node_Storage.h"
 
+// 📦 Protocol Definition Layer
 #define DATA_STREAM         0x04
 #define CMD_REQ_RESEND      0x05
 #define CMD_REQ_DIAG        0x06
 #define MAX_RETRIES_ALLOWED 3
 
+// Staging footprint structure for fragmented multi-frame assembly 
 struct LMPAssemblyBuffer {
     uint8_t  rawPayload[32];       
     uint8_t  bytesWritten;         
@@ -17,8 +19,11 @@ struct LMPAssemblyBuffer {
 
 static LMPAssemblyBuffer assemblyLine[MAX_NODE_ID + 1];
 
+// 🔌 Static Member Variables Instantiation
 uint32_t NodeCAN::currentPollingInterval = 1000; 
-uint32_t NodeCAN::discoveryStartTime = 0;
+uint32_t NodeCAN::discoveryStartTime = 0; 
+uint8_t NodeCAN::activeDiagnosticNode = 0; // 🎯 Tracks UI focus state
+
 SPIClass NodeCAN::hspiCAN(HSPI); 
 MCP2515 NodeCAN::mcp2515(CAN_CS, 10000000, &hspiCAN);
 NetworkState NodeCAN::currentBusState = STATE_STANDBY;
@@ -29,7 +34,7 @@ void NodeCAN::init() {
     mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ); 
     mcp2515.setNormalMode();
     currentBusState = STATE_STANDBY;
-    Serial.println(F("[CAN Engine] MCP2515 Online (250KBPS)."));
+    Serial.println(F("[CAN Engine] MCP2515 Hardware Online (250KBPS). Normal Mode Locked."));
 }
 
 void NodeCAN::startDiscoveryCycle() {
@@ -51,35 +56,32 @@ void NodeCAN::sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payl
 
 void NodeCAN::broadcastEndCycle() {
     sendCommand(0x00, 0x02, NULL, 0); 
-    Serial.println(F("[CAN Engine] Broadcasted End-of-Cycle (0x02)."));
+    Serial.println(F("[CAN Engine] Broadcasted End-of-Cycle (0x02) to Network."));
 }
 
 void NodeCAN::requestFreshDiagnostics(uint8_t targetLmpId) {
     sendCommand(targetLmpId, CMD_REQ_DIAG, NULL, 0);
+    Serial.print(F("[CAN Engine] Force-Polled Diagnostic Byte from Node ID: "));
+    Serial.println(targetLmpId);
 }
 
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
     uint32_t rawId = frame.can_id; 
     
-    // 1. Structural Sanity Filters
     if (rawId < 1 || rawId > MAX_NODE_ID) return;
     if (frame.can_dlc < 3) return; 
     
     uint8_t instructionId = frame.data[1]; 
     LMPAssemblyBuffer& session = assemblyLine[rawId];
 
-    // 2. Master Instruction Router
     switch (instructionId) {
         
-        // ====================================================================
-        // 🔍 CASE 1: DISCOVERY SWEEP HANDSHAKE
-        // ====================================================================
         case 0x01: 
             if (currentBusState == STATE_COLLECTING_REPLIES || 
                 currentBusState == STATE_INIT_DISCOVERY || 
                 currentBusState == STATE_RECHECK_WINDOW) {
                 
-                uint8_t groupType = frame.data[3]; // Group ID packed in Byte 3
+                uint8_t groupType = frame.data[3]; 
                 
                 uint8_t activeNodes[MAX_NODE_ID];
                 uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
@@ -97,29 +99,22 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
             }
             break;
             
-        // ====================================================================
-        // 📊 CASE 2 & 3: ROUTINE TELEMETRY POLL & ASYNC UNPOLLED EVENT OVERRIDES
-        // ====================================================================
         case DATA_STREAM: 
         case 0x09: { 
-            // Step A: Handle Emergency Fault Registrations Immediately
             if (instructionId == 0x09) {
                 Serial.print(F("🚨 EMERGENCY FROM NODE: ")); Serial.println(rawId);
                 NodeRegistry::updateNodeError(rawId, 0xFF); 
             }
 
-            // Step B: Extract Segmented Frame Protocol Controls
-            uint8_t packetsLeft    = frame.data[2]; // Byte 2 = Sequential frame tracking countdown
-            uint8_t dataBytesInMsg = frame.can_dlc - 3; // Strip Target ID, Opcode, and Control Byte
+            uint8_t packetsLeft    = frame.data[2]; 
+            uint8_t dataBytesInMsg = frame.can_dlc - 3; 
             
-            // Step C: Initialize Buffer Staging Layout if this is the initial packet block
             if (!session.inProgress) {
                 session.bytesWritten = 0;
                 session.expectedNextCount = packetsLeft;
                 session.inProgress = true;
             } 
             
-            // Step D: Stream data payload directly into localized RAM array
             for (uint8_t i = 0; i < dataBytesInMsg; i++) {
                 if (session.bytesWritten < 32) {
                     session.rawPayload[session.bytesWritten] = frame.data[3 + i];
@@ -127,12 +122,10 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 }
             }
             
-            // Step E: Trigger structural de-quantization only if the terminal frame (0) is complete
             if (packetsLeft == 0) { 
                 session.inProgress = false;
                 LMPDataRecord nodeInfo;
                 
-                // Self-Healing Fallback: If discovery handshake dropped out, map node layout dynamically
                 if (!NodeRegistry::getNodeSnapshot(rawId, nodeInfo)) {
                     uint8_t defaultGroup = (rawId >= 161) ? 4 : 1;
                     NodeRegistry::registerNode(rawId, defaultGroup);
@@ -142,10 +135,8 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                 uint32_t currentRuntimeMs = millis();
                 String logLine = String(currentRuntimeMs) + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
 
-                // Step F: Group Profile De-quantization Matrix (Fixed-Point to Float)
                 switch (nodeInfo.groupType) {
-                    
-                    case 1: { // PROFILE 1: Single IR Target Subsystem Panel [ObjH, ObjL, AmbH, AmbL]
+                    case 1: { 
                         if (session.bytesWritten >= 4) {
                             int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
                             int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
@@ -159,7 +150,7 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                         break;
                     }
                     
-                    case 2: { // PROFILE 2: IR Target + High-Precision Environmental Probe [ObjH, ObjL, AmbH, AmbL, Hum]
+                    case 2: { 
                         if (session.bytesWritten >= 5) {
                             int16_t rawObj = (session.rawPayload[0] << 8) | session.rawPayload[1];
                             int16_t rawAmb = (session.rawPayload[2] << 8) | session.rawPayload[3];
@@ -175,7 +166,7 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                         break;
                     }
                     
-                    case 3: { // PROFILE 3: Dual-Zone Fragmented Bushing/Transformer Segment Panel
+                    case 3: { 
                         if (session.bytesWritten >= 6) {
                             int16_t rawObj1 = (session.rawPayload[0] << 8) | session.rawPayload[1];
                             int16_t rawObj2 = (session.rawPayload[2] << 8) | session.rawPayload[3];
@@ -191,7 +182,7 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                         break;
                     }
                     
-                    case 4: { // PROFILE 4: Remote Actuator Switched Breaker Relay Panels [SwitchMask]
+                    case 4: { 
                         if (session.bytesWritten >= 1) {
                             uint8_t switchStatusMask = session.rawPayload[0];
                             NodeRegistry::updateTelemetry(rawId, 0.0f, 0.0f, 0.0f, 0.0f); 
@@ -200,28 +191,27 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                         }
                         break;
                     }
-                } // End of de-quantization switch matrix
-            } // End of packet completed structural checks
+                } 
+            } 
             break;
-        } // End of Case DATA_STREAM / 0x09 segment wrapper
+        } 
         
-        // ====================================================================
-        // ⚙️ CASE 4: OUT-OF-BAND LIVE ON-DEMAND USER DIAGNOSTICS LINK
-        // ====================================================================
         case CMD_REQ_DIAG: { 
-            uint8_t freshErrorMask = frame.data[2]; // Target registers packed cleanly into Byte 2
+            uint8_t freshErrorMask = frame.data[2]; 
             NodeRegistry::updateNodeError(rawId, freshErrorMask);
+            
+            Serial.print(F("[CAN Diagnostic] Fresh Diagnostic Register Sync from Node "));
+            Serial.print(rawId); Serial.print(F(" -> Mask Byte: 0x"));
+            Serial.println(freshErrorMask, HEX);
             break;
         }
-    } // End of master instruction id switch router Matrix
+    } 
 }
 
 void NodeCAN::runNetworkWorker(void* pvParameters) {
     struct can_frame incomingFrame;
     uint32_t recheckStartTime = 0;
     static uint8_t discoveryPulseCount = 0;
-    uint32_t lastPollTime = 0;
-    uint8_t  pollIndex = 0;
 
     for (;;) { 
         switch (currentBusState) {
@@ -231,7 +221,7 @@ void NodeCAN::runNetworkWorker(void* pvParameters) {
             case STATE_INIT_DISCOVERY:
                 discoveryPulseCount = 0;
                 discoveryStartTime = millis(); 
-                Serial.println(F("[CAN Engine] Phase 1/4: Launching Discovery..."));
+                Serial.println(F("[CAN Engine] Phase 1/4: Flooding bus with network discovery requests..."));
                 while (discoveryPulseCount < 3) {
                     sendCommand(0x00, 0x01, NULL, 0);
                     discoveryPulseCount++;
@@ -242,6 +232,7 @@ void NodeCAN::runNetworkWorker(void* pvParameters) {
                 
             case STATE_COLLECTING_REPLIES:
                 if (millis() - discoveryStartTime >= DISCOVERY_WINDOW) {
+                    Serial.println(F("[CAN Engine] Phase 2/4 Closed. Shifting to Sequential Ack Validation."));
                     currentBusState = STATE_SEND_ACK_SEQUENTIAL;
                 }
                 break;
@@ -249,10 +240,15 @@ void NodeCAN::runNetworkWorker(void* pvParameters) {
             case STATE_SEND_ACK_SEQUENTIAL: {
                 uint8_t activeNodes[MAX_NODE_ID];
                 uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+                
+                Serial.print(F("[CAN Engine] Phase 3/4: Issuing unicast confirmations to ")); 
+                Serial.print(totalFound); Serial.println(F(" nodes..."));
+                
                 for (int i = 0; i < totalFound; i++) {
                     sendCommand(activeNodes[i], 0x01, NULL, 0); 
                     vTaskDelay(pdMS_TO_TICKS(15)); 
                 }
+                
                 broadcastEndCycle(); 
                 recheckStartTime = millis();
                 currentBusState = STATE_RECHECK_WINDOW;
@@ -261,24 +257,20 @@ void NodeCAN::runNetworkWorker(void* pvParameters) {
                 
             case STATE_RECHECK_WINDOW:
                 if (millis() - recheckStartTime >= 3000) {
+                    Serial.println(F("[CAN Engine] Phase 4/4 Complete: Topology verified stable. Locking Operational Listening."));
                     NodeRegistry::finalizeDiscoveryRegistry();
                     currentBusState = STATE_OPERATIONAL_MODE;
-                    Serial.println(F("[CAN Engine] Polling Mode Active."));
                 }
                 break;
                 
             case STATE_OPERATIONAL_MODE: {
-                uint8_t activeNodes[MAX_NODE_ID];
-                uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+                // 🎯 CONTEXT-AWARE POLLING
+                // Only fire 0x06 diagnostic polls if the UI actively designates a target
+                static uint32_t lastFocusedPollTime = 0;
                 
-                if (totalFound > 0 && (millis() - lastPollTime >= currentPollingInterval)) {
-                    lastPollTime = millis();
-                    if (pollIndex >= totalFound) pollIndex = 0;
-                    
-                    uint8_t nextTarget = activeNodes[pollIndex];
-                    uint8_t runtimeConfigPayload[2] = { 85, 2 }; 
-                    sendCommand(nextTarget, 0x04, runtimeConfigPayload, 2); 
-                    pollIndex++;
+                if (activeDiagnosticNode > 0 && (millis() - lastFocusedPollTime >= 2000)) {
+                    lastFocusedPollTime = millis();
+                    sendCommand(activeDiagnosticNode, CMD_REQ_DIAG, NULL, 0); 
                 }
                 break;
             }

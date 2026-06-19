@@ -7,11 +7,11 @@
 #include "Node_Config.h"
 
 enum MenuLevel {
-    MENU_WELCOME_SPLASH = 0,    // 🚀 STEP 1
-    MENU_SCANNING_BUS,          // 🚀 STEP 2
-    MENU_AUTO_SCROLL_DASHBOARD, // 🚀 STEP 3
+    MENU_WELCOME_SPLASH = 0,    
+    MENU_SCANNING_BUS,          
+    MENU_AUTO_SCROLL_DASHBOARD, 
     MENU_DEVICE_DEEP_DIVE,
-    MENU_DEVICE_DIAGS,
+    MENU_DEVICE_DIAGS,          // Diagnostic sub-page level state
     MENU_SYSTEM_SETTINGS
 };
 
@@ -22,8 +22,8 @@ private:
     static uint8_t selectedDeviceIndex;
     
     static void renderHeader();
-    static void drawWelcomeSplash();   // 🚀 Added
-    static void drawScanningPage();    // 🚀 Added
+    static void drawWelcomeSplash();   
+    static void drawScanningPage();    
     static void drawAutoDashboard();
     static void drawDeviceTelemetryPage(uint8_t targetId);
     static void drawDeviceDiagnosticPage(uint8_t targetId); 

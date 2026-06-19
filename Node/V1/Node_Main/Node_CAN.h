@@ -23,17 +23,20 @@ private:
 
 public:
     static uint32_t currentPollingInterval; 
-    static uint32_t discoveryStartTime; // Exposed for UI progress bar calculation
+    static uint32_t discoveryStartTime; 
+    
+    // 🎯 NEW: Links the UI menu to the CAN Engine
+    static uint8_t activeDiagnosticNode; 
 
     static void init();
     static void startDiscoveryCycle();
     static void broadcastEndCycle();
     static void sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payload, uint8_t dlc);
+    
     static void requestFreshDiagnostics(uint8_t targetLmpId); 
     static void parseIncomingFrame(struct can_frame& frame);
     static void runNetworkWorker(void* pvParameters);
     
-    // 🚀 NEW: Expose network engine state directly to the HMI layer
     static NetworkState getBusState() { return currentBusState; }
 };
 
