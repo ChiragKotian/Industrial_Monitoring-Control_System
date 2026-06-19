@@ -17,6 +17,8 @@ void LMP_Hardware::init() {
     refresh(); 
 }
 
+float LMP_Hardware::getCoreObjectTemp() { return panel_obj1; }
+
 void LMP_Hardware::refresh() {
     bool ir1_fault = false;
     MLX_sens::readMLX(0x5A, panel_obj1, panel_amb, ir1_fault);
@@ -64,6 +66,8 @@ void LMP_Hardware::init() {
     if (!AHT20_sens::initAHT())    global_error_register |= (1 << 2);
     refresh(); 
 }
+
+float LMP_Hardware::getCoreObjectTemp() { return panel_obj1; }
 
 void LMP_Hardware::refresh() {
     bool ir1_fault = false;
@@ -124,6 +128,11 @@ void LMP_Hardware::init() {
     if (!MLX_sens::initMLX(0x5A)) global_error_register |= (1 << 0);
     if (!MLX_sens::initMLX(0x5B)) global_error_register |= (1 << 1); 
     refresh(); 
+}
+
+float LMP_Hardware::getCoreObjectTemp() { 
+    // Return the highest critical threshold of your two monitored transformer segments
+    return (panel_obj1 > panel_obj2) ? panel_obj1 : panel_obj2; 
 }
 
 void LMP_Hardware::refresh() {
@@ -193,6 +202,8 @@ void LMP_Hardware::init() {
     digitalWrite(RELAY_PIN_1, LOW);
     digitalWrite(RELAY_PIN_2, LOW);
 }
+
+float LMP_Hardware::getCoreObjectTemp() { return 0.0f; } // Actuators hold no thermal traces
 
 void LMP_Hardware::refresh() {}
 

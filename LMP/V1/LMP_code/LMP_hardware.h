@@ -17,6 +17,7 @@ public:
     
     // 🚀 NEW: Direct injection stream replaces the old packTelemetry buffer
     static void sendStream(MCP2515& canBus, uint8_t opcode); 
+    static float getCoreObjectTemp(); // Returns live float reading to background checking registers
     
     static void executeAction(uint8_t instructionId, uint8_t* payload, uint8_t dlc);
     static uint8_t getErrorCode();
