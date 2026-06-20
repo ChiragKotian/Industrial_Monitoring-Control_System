@@ -3,42 +3,55 @@
 #include "Node_Storage.h"
 #include "Node_CAN.h"
 
+// 🎛️ HARDWARE PIN DEFINITIONS (Safe ESP32-S3 Pins)
+#define BTN_ENTER 1   
+#define BTN_BACK  3  
+#define BTN_UP    41 
+#define BTN_DOWN  42 
+#define BTN_HOME  47
+
 enum HmiEventType {
-    EVENT_BUTTON_CLICK,
-    EVENT_PERIODIC_REFRESH
+    EVENT_BUTTON_CLICK
 };
 
 struct HmiEvent {
     HmiEventType type;
     uint8_t      buttonId; 
-    bool         isLong;   
 };
 
 SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
 MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
-uint8_t NodeUI::selectedDeviceIndex = 0;
-static uint8_t currentLiveIndex = 0;
-static QueueHandle_t xHmiQueue = NULL;
-// 1. Change the static tracking variables at the top of Node_UI.cpp
-static uint8_t selectedLmpId = 0; // Track the ID directly, not the array index!
-static uint8_t currentLiveId = 0;
 
+static uint8_t selectedLmpId = 0; 
+static uint8_t currentLiveId = 0;
+static QueueHandle_t xHmiQueue = NULL;
+static uint32_t buttonPressStart[50] = {0}; 
+
+// ⚡ HARDWARE INTERRUPT (Debounced for External Pull-ups)
 static void IRAM_ATTR hmiButtonISR(void* arg) {
     uint32_t pin = (uint32_t)arg;
-    HmiEvent evt;
-    evt.type = EVENT_BUTTON_CLICK;
-    evt.buttonId = pin;
-    evt.isLong = false;
     
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xQueueSendFromISR(xHmiQueue, &evt, &xHigherPriorityTaskWoken);
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
+    if (digitalRead(pin) == LOW) { // Button Pressed (Shorting to GND)
+        buttonPressStart[pin] = xTaskGetTickCountFromISR();
+    } else { // Button Released
+        uint32_t pressDuration = (xTaskGetTickCountFromISR() - buttonPressStart[pin]) * portTICK_PERIOD_MS;
+        
+        if (pressDuration > 20) { // 20ms hardware debounce threshold
+            HmiEvent evt;
+            evt.type = EVENT_BUTTON_CLICK;
+            evt.buttonId = pin;
+            
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            xQueueSendFromISR(xHmiQueue, &evt, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken) {
+                portYIELD_FROM_ISR();
+            }
+        }
     }
 }
 
 void NodeUI::init() {
-    xHmiQueue = xQueueCreate(10, sizeof(HmiEvent));
+    xHmiQueue = xQueueCreate(15, sizeof(HmiEvent));
     if (xHmiQueue == NULL) return;
 
     pinMode(Vext, OUTPUT);
@@ -49,13 +62,14 @@ void NodeUI::init() {
     display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
     
-    // PRG button is on Pin 0 on the Heltec V3
-    uint8_t buttonPins[] = {0}; 
+    // 🎛️ INITIALIZE 5-BUTTON MATRIX
+    // Because you have external pull-ups, we just use standard INPUT
+    uint8_t buttonPins[] = {BTN_ENTER, BTN_BACK, BTN_UP, BTN_DOWN, BTN_HOME}; 
     for(uint8_t pin : buttonPins) {
-        pinMode(pin, INPUT_PULLUP);
-        attachInterruptArg(digitalPinToInterrupt(pin), hmiButtonISR, (void*)pin, FALLING);
+        pinMode(pin, INPUT);
+        attachInterruptArg(digitalPinToInterrupt(pin), hmiButtonISR, (void*)pin, CHANGE); 
     }
-    Serial.println(F("[HMI Engine] Core Graphics Infrastructure Deployed."));
+    Serial.println(F("[HMI Engine] 5-Button Matrix Deployed."));
 }
 
 void NodeUI::renderHeader(){
@@ -65,7 +79,6 @@ void NodeUI::renderHeader(){
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 0, "HPCL REGISTRY: " + String(totalFound)); 
-    
     display.setTextAlignment(TEXT_ALIGN_RIGHT);
     display.drawString(128, 0, "SS-A1"); 
     display.drawHorizontalLine(0, 12, 128);
@@ -107,21 +120,19 @@ void NodeUI::drawAutoDashboard() {
     
     if (totalFound == 0) {
         display.setTextAlignment(TEXT_ALIGN_CENTER);
+        display.setFont(ArialMT_Plain_10);
         display.drawString(64, 30, "[ NO DEVICES ONLINE ]");
         return;
     }
     
     uint32_t activeIndex = (millis() / 3000) % totalFound; 
-    
-    // Track the actual Node ID currently on the screen
     currentLiveId = activeNodes[activeIndex]; 
-    uint8_t currentLmpId = activeNodes[activeIndex];
     
     LMPDataRecord snapshot;
-    if (NodeRegistry::getNodeSnapshot(currentLmpId, snapshot)) {
+    if (NodeRegistry::getNodeSnapshot(currentLiveId, snapshot)) {
         display.setFont(ArialMT_Plain_16);
         display.setTextAlignment(TEXT_ALIGN_LEFT);
-        display.drawString(0, 15, "LMP ID: " + String(currentLmpId));
+        display.drawString(0, 15, "LMP ID: " + String(currentLiveId));
         
         display.setFont(ArialMT_Plain_10);
         display.setTextAlignment(TEXT_ALIGN_RIGHT);
@@ -178,9 +189,6 @@ void NodeUI::drawDeviceTelemetryPage(uint8_t targetId) {
     }
 }
 
-/**
- * @brief 🚀 THE NEW RAW BINARY DIAGNOSTICS PAGE
- */
 void NodeUI::drawDeviceDiagnosticPage(uint8_t targetId) {
     renderHeader();
     LMPDataRecord snapshot;
@@ -191,50 +199,95 @@ void NodeUI::drawDeviceDiagnosticPage(uint8_t targetId) {
         return;
     }
     
-    // Top Title
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 14, "DIAGS -> NODE " + String(targetId));
     
-    // Center: Draw the raw Binary Error Mask
+    display.setTextAlignment(TEXT_ALIGN_RIGHT);
+    display.drawString(128, 14, "Poll: " + String(NodeCAN::currentPollingInterval) + "ms");
+    
     display.setFont(ArialMT_Plain_16);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     
-    // Convert the 8-bit byte into a readable 00000000 string
     String binaryString = "";
     for (int i = 7; i >= 0; i--) {
         binaryString += (snapshot.errorCode & (1 << i)) ? "1" : "0";
     }
-    
-    // Display the 8-bit binary format right in the middle
     display.drawString(64, 30, binaryString);
     
-    // Bottom: Display the HEX code equivalent for engineers
     display.setFont(ArialMT_Plain_10);
     display.drawString(64, 50, "HEX VALUE: 0x" + String(snapshot.errorCode, HEX));
 }
 
+// 🕹️ DISCRETE 5-BUTTON LOGIC MATRIX
 void NodeUI::handleButtonPush(uint8_t buttonId, bool isLongPress) {
-    if (buttonId == 0) { 
-        if (activeMenuState == MENU_AUTO_SCROLL_DASHBOARD) {
-            activeMenuState = MENU_DEVICE_DEEP_DIVE;
-            selectedLmpId = currentLiveId; 
-        } 
-        else if (activeMenuState == MENU_DEVICE_DEEP_DIVE) {
-            activeMenuState = MENU_DEVICE_DIAGS;
+    
+    // 🏠 GLOBAL OVERRIDE: Home Button ALWAYS returns to main dashboard
+    if (buttonId == BTN_HOME) { 
+        activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
+        NodeCAN::activeDiagnosticNode = 0; 
+        return; 
+    }
+
+    switch (activeMenuState) {
+        
+        // --- LEVEL 1: DASHBOARD ---
+        case MENU_AUTO_SCROLL_DASHBOARD:
+            if (buttonId == BTN_ENTER) { 
+                activeMenuState = MENU_DEVICE_DEEP_DIVE;
+                selectedLmpId = currentLiveId; 
+            }
+            break;
             
-            // 🎯 START FOCUSED POLLING: Tell CAN Engine to poll this node every 2s
-            NodeCAN::activeDiagnosticNode = selectedLmpId;
+        // --- LEVEL 2: DEVICE TELEMETRY ---
+        case MENU_DEVICE_DEEP_DIVE:
+            if (buttonId == BTN_ENTER) { 
+                activeMenuState = MENU_DEVICE_DIAGS;
+                NodeCAN::activeDiagnosticNode = selectedLmpId;
+                NodeCAN::requestFreshDiagnostics(selectedLmpId); 
+            } 
+            else if (buttonId == BTN_BACK) {
+                activeMenuState = MENU_AUTO_SCROLL_DASHBOARD;
+            }
+            else if (buttonId == BTN_UP || buttonId == BTN_DOWN) {
+                uint8_t activeNodes[MAX_NODE_ID];
+                uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+                if (totalFound > 1) {
+                    uint8_t currentIndex = 0;
+                    for (uint8_t i = 0; i < totalFound; i++) {
+                        if (activeNodes[i] == selectedLmpId) currentIndex = i;
+                    }
+                    
+                    if (buttonId == BTN_UP) { 
+                        currentIndex = (currentIndex + 1) % totalFound;
+                    } else if (buttonId == BTN_DOWN) { 
+                        currentIndex = (currentIndex == 0) ? (totalFound - 1) : (currentIndex - 1);
+                    }
+                    selectedLmpId = activeNodes[currentIndex];
+                }
+            }
+            break;
             
-            // Fire the very first request instantly so the user doesn't wait 2 seconds
-            NodeCAN::requestFreshDiagnostics(selectedLmpId); 
-        } 
-        else if (activeMenuState == MENU_DEVICE_DIAGS) {
-            activeMenuState = MENU_AUTO_SCROLL_DASHBOARD; 
+        // --- LEVEL 3: DIAGNOSTICS ---
+        case MENU_DEVICE_DIAGS:
+            if (buttonId == BTN_BACK) { 
+                activeMenuState = MENU_DEVICE_DEEP_DIVE;
+                NodeCAN::activeDiagnosticNode = 0; // Stop Targeted Polling
+            }
+            else if (buttonId == BTN_UP) { 
+                if (NodeCAN::currentPollingInterval <= 4500) {
+                    NodeCAN::currentPollingInterval += 500;
+                }
+            }
+            else if (buttonId == BTN_DOWN) { 
+                if (NodeCAN::currentPollingInterval >= 1000) {
+                    NodeCAN::currentPollingInterval -= 500;
+                }
+            }
+            break;
             
-            // 🛑 STOP FOCUSED POLLING: Free up the CAN bus bandwidth
-            NodeCAN::activeDiagnosticNode = 0;
-        }
+        default:
+            break;
     }
 }
 
@@ -246,7 +299,7 @@ void NodeUI::runHMITask(void* pvParameters) {
     for (;;) {
         BaseType_t eventReceived = xQueueReceive(xHmiQueue, &currentEvent, pdMS_TO_TICKS(50));
         if (eventReceived == pdTRUE && currentEvent.type == EVENT_BUTTON_CLICK) {
-            handleButtonPush(currentEvent.buttonId, currentEvent.isLong);
+            handleButtonPush(currentEvent.buttonId, false);
         }
 
         if ((xTaskGetTickCount() - xLastWakeTime) >= xRefreshPeriod) {
@@ -266,8 +319,6 @@ void NodeUI::runHMITask(void* pvParameters) {
                     }
                 }
             } else {
-                // 🛡️ HARDWARE SAFEGUARD: If the network drops while looking at diagnostics,
-                // safely kick the user out and stop the targeted polling immediately.
                 if (busState != STATE_OPERATIONAL_MODE) {
                      activeMenuState = MENU_SCANNING_BUS;
                      NodeCAN::activeDiagnosticNode = 0; 
@@ -275,25 +326,12 @@ void NodeUI::runHMITask(void* pvParameters) {
             }
             
             switch (activeMenuState) {
-                case MENU_WELCOME_SPLASH:
-                    drawWelcomeSplash();
-                    break;
-                case MENU_SCANNING_BUS:
-                    drawScanningPage();
-                    break;
-                case MENU_AUTO_SCROLL_DASHBOARD:
-                    drawAutoDashboard();
-                    break;
-                case MENU_DEVICE_DEEP_DIVE: {
-                    drawDeviceTelemetryPage(selectedLmpId);
-                    break;
-                }
-                case MENU_DEVICE_DIAGS: { 
-                    drawDeviceDiagnosticPage(selectedLmpId);
-                    break;
-                }
-                default:
-                    break;
+                case MENU_WELCOME_SPLASH: drawWelcomeSplash(); break;
+                case MENU_SCANNING_BUS: drawScanningPage(); break;
+                case MENU_AUTO_SCROLL_DASHBOARD: drawAutoDashboard(); break;
+                case MENU_DEVICE_DEEP_DIVE: drawDeviceTelemetryPage(selectedLmpId); break;
+                case MENU_DEVICE_DIAGS: drawDeviceDiagnosticPage(selectedLmpId); break;
+                default: break;
             }
             display.display();
         }
