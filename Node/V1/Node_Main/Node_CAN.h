@@ -22,11 +22,9 @@ private:
     static NetworkState currentBusState;
 
 public:
-    static uint32_t currentPollingInterval; 
     static uint32_t discoveryStartTime; 
-    
-    // 🎯 NEW: Links the UI menu to the CAN Engine
     static uint8_t activeDiagnosticNode; 
+    static uint16_t lmpPollRates[MAX_NODE_ID + 1]; // 🎯 Tracks known rates for all nodes
 
     static void init();
     static void startDiscoveryCycle();
@@ -34,6 +32,11 @@ public:
     static void sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payload, uint8_t dlc);
     
     static void requestFreshDiagnostics(uint8_t targetLmpId); 
+    
+    // 🎯 NEW: Configuration Opcodes
+    static void requestPollRate(uint8_t targetLmpId);
+    static void setPollRate(uint8_t targetLmpId, uint16_t intervalMs);
+    
     static void parseIncomingFrame(struct can_frame& frame);
     static void runNetworkWorker(void* pvParameters);
     

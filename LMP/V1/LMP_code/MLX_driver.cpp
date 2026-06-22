@@ -35,7 +35,12 @@ bool MLX_sens::initMLX(uint8_t addr) {
 }
 
 void MLX_sens::readMLX(uint8_t addr, float& objOut, float& ambOut, bool& faultOut) {
-    // 🔥 FAULT TOLERANCE: Check if physical wires disconnected mid-operation
+    // 🛡️ HARDWARE SAFEGUARD: Configure the I2C timing register (TWBR)
+    // On the Arduino Nano (ATmega328P), this forces the I2C clock rate 
+    // and prevents the library from hanging if the SDA line is left floating.
+    TWBR = ((F_CPU / 100000L) - 16) / 2; 
+
+    // 1. Verify bus health BEFORE calling library methods
     if (!checkI2CAddress(addr)) {
         faultOut = true;
         objOut = 0.0f;
@@ -43,6 +48,7 @@ void MLX_sens::readMLX(uint8_t addr, float& objOut, float& ambOut, bool& faultOu
         return;
     }
 
+    // 2. Perform acquisition
     if (addr == 0x5A) {
         objOut = mlxPrimary.readObjectTempC();
         ambOut = mlxPrimary.readAmbientTempC();
@@ -54,17 +60,19 @@ void MLX_sens::readMLX(uint8_t addr, float& objOut, float& ambOut, bool& faultOu
         return;
     }
 
-    // Trap library software failures (NaN)
+    // 3. Post-acquisition validation check
+    // We check for NAN and also ensure the values make sense for a refinery environment
     if (isnan(objOut) || isnan(ambOut) || objOut < -70.0f || objOut > 380.0f) {
         faultOut = true;
         objOut = 0.0f; 
         ambOut = 0.0f;
     } else {
         faultOut = false;
+        // Thermal boundary check
         if (ambOut >= 80.0f) {
-            Serial.print(F("⚠️ CRITICAL ALERT: Casing Ambience Reaching Thermal Bounds: "));
-            Serial.print(ambOut);
-            Serial.println(F(" C"));
+            // This alert prints to local LMP serial only, not the CAN bus
+            Serial.print(F("⚠️ ALERT: Casing Thermal Bound: "));
+            Serial.println(ambOut);
         }
     }
 }
