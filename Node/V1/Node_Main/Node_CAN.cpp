@@ -1,12 +1,15 @@
 #include "Node_CAN.h"
 #include "Node_Registry.h"
 #include "Node_Storage.h"
+#include "Node_UI.h"
 #include <time.h>
 
 // 📦 Protocol Definition Layer
 #define DATA_STREAM         0x04
 #define CMD_REQ_RESEND      0x05
 #define CMD_REQ_DIAG        0x06
+#define CMD_SET_POLL        0x07
+#define CMD_GET_POLL        0x0A
 #define MAX_RETRIES_ALLOWED 3
 
 // Staging footprint structure for fragmented multi-frame assembly 
@@ -21,7 +24,7 @@ struct LMPAssemblyBuffer {
 static LMPAssemblyBuffer assemblyLine[MAX_NODE_ID + 1];
 
 // 🔌 Static Member Variables Instantiation
-uint32_t NodeCAN::currentPollingInterval = 1000; 
+uint16_t NodeCAN::lmpPollRates[MAX_NODE_ID + 1];
 uint32_t NodeCAN::discoveryStartTime = 0; 
 uint8_t NodeCAN::activeDiagnosticNode = 0; // 🎯 Tracks UI focus state
 
@@ -30,6 +33,8 @@ MCP2515 NodeCAN::mcp2515(CAN_CS, 10000000, &hspiCAN);
 NetworkState NodeCAN::currentBusState = STATE_STANDBY;
 
 void NodeCAN::init() {
+    for(int i = 0; i <= MAX_NODE_ID; i++) lmpPollRates[i] = 4000;
+
     hspiCAN.begin(CAN_SCK, CAN_MISO, CAN_MOSI, CAN_CS);
     mcp2515.reset();
     mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ); 
@@ -64,6 +69,18 @@ void NodeCAN::requestFreshDiagnostics(uint8_t targetLmpId) {
     sendCommand(targetLmpId, CMD_REQ_DIAG, NULL, 0);
     Serial.print(F("[CAN Engine] Force-Polled Diagnostic Byte from Node ID: "));
     Serial.println(targetLmpId);
+}
+
+void NodeCAN::requestPollRate(uint8_t targetLmpId) {
+    sendCommand(targetLmpId, CMD_GET_POLL, NULL, 0);
+}
+
+void NodeCAN::setPollRate(uint8_t targetLmpId, uint16_t intervalMs) {
+    uint8_t payload[2];
+    uint16_t q_rate = intervalMs / 100;
+    payload[0] = (q_rate >> 8) & 0xFF;
+    payload[1] = q_rate & 0xFF;
+    sendCommand(targetLmpId, CMD_SET_POLL, payload, 2);
 }
 
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
@@ -213,6 +230,19 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
             Serial.print(F("[CAN Diagnostic] Fresh Diagnostic Register Sync from Node "));
             Serial.print(rawId); Serial.print(F(" -> Mask Byte: 0x"));
             Serial.println(freshErrorMask, HEX);
+            break;
+        }
+
+        case CMD_GET_POLL: { 
+            uint16_t fetchedRate = (frame.data[2] << 8 | frame.data[3]) * 100;
+            lmpPollRates[rawId] = fetchedRate;
+            
+            // Instantly notify the UI to refresh its screen if it's currently on the settings page!
+            NodeUI::updateLivePollRate(rawId, fetchedRate);
+            
+            Serial.print(F("[CAN Config] LMP ")); Serial.print(rawId);
+            Serial.print(F(" Streaming Rate Confirmed: ")); 
+            Serial.print(fetchedRate); Serial.println(F(" ms"));
             break;
         }
     } 

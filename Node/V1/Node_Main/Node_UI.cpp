@@ -26,8 +26,18 @@ uint8_t NodeUI::sysHubCursorIndex = 0;
 static uint8_t timeSetupCursor = 0; 
 static int timeSetupValues[6] = {1, 1, 2024, 0, 0, 0}; 
 
+// 🎯 LIVE POLLING CONFIGURATION TRACKER
+static uint16_t editingPollRate = 4000; 
+
 static QueueHandle_t xHmiQueue = NULL;
 static uint32_t buttonPressStart[50] = {0}; 
+
+// 🎯 SYNC LIVE LMP DATA WITH UI
+void NodeUI::updateLivePollRate(uint8_t targetId, uint16_t rate) {
+    if (activeMenuState == MENU_DEVICE_SETTINGS && selectedLmpId == targetId) {
+        editingPollRate = rate;
+    }
+}
 
 // 🧮 TIME MATH HELPERS
 static uint8_t getMaxDays(uint8_t month, int year) {
@@ -78,8 +88,7 @@ void NodeUI::init() {
         attachInterruptArg(digitalPinToInterrupt(pin), hmiButtonISR, (void*)pin, FALLING); 
     }
     
-    // 🕒 THE RTC BASELINE KICKSTART:
-    // Guarantees clean relative trend data in the CSV even if user forgets to set time.
+    // 🕒 THE RTC BASELINE KICKSTART
     struct timeval tv;
     gettimeofday(&tv, NULL);
     if (tv.tv_sec < 10000) { 
@@ -88,7 +97,7 @@ void NodeUI::init() {
         settimeofday(&tv, NULL);
     }
     
-    Serial.println(F("[HMI Engine] LMP & System Hub Architecture Deployed."));
+    Serial.println(F("[HMI Engine] LMP Config & System Hub Architecture Deployed."));
 }
 
 void NodeUI::renderHeader(const String& modeIndicator){
@@ -109,7 +118,7 @@ void NodeUI::drawWelcomeSplash() {
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.drawString(64, 6, "HPCL MUMBAI");
     display.setFont(ArialMT_Plain_10);
-    display.drawString(64, 26, "Substation Gateway v2.5");
+    display.drawString(64, 26, "Substation Gateway v2.6");
     display.drawString(64, 40, "Dev: Chirag Kotian");
     display.drawString(64, 52, "[CAN Boot Initializing]");
 }
@@ -212,11 +221,14 @@ void NodeUI::drawDeviceSettingsPage(uint8_t targetId) {
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 14, "SETTINGS -> NODE " + String(targetId));
-    display.drawString(0, 30, "Diag Polling Rate:");
+    display.drawString(0, 30, "LMP Telemetry Stream Rate:");
     
     display.setFont(ArialMT_Plain_16);
     display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.drawString(64, 45, String(NodeCAN::currentPollingInterval) + " ms");
+    
+    // 🎯 FORMAT TO SECONDS WITH 1 DECIMAL PLACE
+    float displaySec = editingPollRate / 1000.0f;
+    display.drawString(64, 45, String(displaySec, 1) + " sec");
 }
 
 // ==========================================
@@ -355,6 +367,10 @@ void NodeUI::handleButtonPush(uint8_t buttonId) {
         case MENU_DEVICE_DIAGS:
             if (buttonId == BTN_ENTER) {
                 activeMenuState = MENU_DEVICE_SETTINGS;
+                // Pre-fill the localized variable with the currently known rate
+                editingPollRate = NodeCAN::lmpPollRates[selectedLmpId]; 
+                // Dispatch a request to the node to get the *live* truth
+                NodeCAN::requestPollRate(selectedLmpId); 
             }
             else if (buttonId == BTN_BACK) { 
                 activeMenuState = MENU_MANUAL_TELEMETRY;
@@ -378,13 +394,15 @@ void NodeUI::handleButtonPush(uint8_t buttonId) {
         // --- PAGE 4: LMP SETTINGS ---
         case MENU_DEVICE_SETTINGS:
             if (buttonId == BTN_BACK) {
+                // 🎯 DISPATCH NEW SETTING TO FIELD NODE AND SAVE
+                NodeCAN::setPollRate(selectedLmpId, editingPollRate);
                 activeMenuState = MENU_DEVICE_DIAGS;
             }
-            else if (buttonId == BTN_UP && NodeCAN::currentPollingInterval <= 4500) { 
-                NodeCAN::currentPollingInterval += 500;
+            else if (buttonId == BTN_UP && editingPollRate <= 59500) { 
+                editingPollRate += 500; // Increase by 0.5s
             }
-            else if (buttonId == BTN_DOWN && NodeCAN::currentPollingInterval >= 1000) { 
-                NodeCAN::currentPollingInterval -= 500;
+            else if (buttonId == BTN_DOWN && editingPollRate >= 3000) { 
+                editingPollRate -= 500; // Decrease by 0.5s
             }
             break;
 
@@ -500,7 +518,6 @@ void NodeUI::runHMITask(void* pvParameters) {
             
             NetworkState busState = NodeCAN::getBusState();
             
-            // Only update system state routing if we are on the top layer
             if (activeMenuState == MENU_WELCOME_SPLASH || activeMenuState == MENU_SCANNING_BUS || activeMenuState == MENU_AUTO_DASHBOARD) {
                 if (busState == STATE_STANDBY || busState == STATE_INIT_DISCOVERY) {
                     activeMenuState = MENU_WELCOME_SPLASH;

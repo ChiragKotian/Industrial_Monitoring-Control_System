@@ -46,6 +46,7 @@ public:
     static void init();
     static void handleButtonPush(uint8_t buttonId);
     static void runHMITask(void* pvParameters);
+    static void updateLivePollRate(uint8_t targetId, uint16_t rate);
 };
 
 #endif
