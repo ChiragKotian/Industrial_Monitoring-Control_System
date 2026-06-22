@@ -1,6 +1,7 @@
 #include "Node_CAN.h"
 #include "Node_Registry.h"
 #include "Node_Storage.h"
+#include <time.h>
 
 // 📦 Protocol Definition Layer
 #define DATA_STREAM         0x04
@@ -132,9 +133,18 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                     NodeRegistry::getNodeSnapshot(rawId, nodeInfo);
                 }
 
-                uint32_t currentRuntimeMs = millis();
-                String logLine = String(currentRuntimeMs) + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
+                // 🕒 GENERATE THE INDUSTRIAL CSV TIMESTAMP
+                struct tm timeinfo;
+                String timeStamp = String(millis()); // Fallback to millis if time not set
+                if(getLocalTime(&timeinfo, 10)) {
+                    char dtBuff[25];
+                    // Formats as: YYYY-MM-DD HH:MM:SS
+                    strftime(dtBuff, sizeof(dtBuff), "%Y-%m-%d %H:%M:%S", &timeinfo);
+                    timeStamp = String(dtBuff);
+                }
 
+                // Append the real timestamp to the CSV row!
+                String logLine = timeStamp + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
                 switch (nodeInfo.groupType) {
                     case 1: { 
                         if (session.bytesWritten >= 4) {

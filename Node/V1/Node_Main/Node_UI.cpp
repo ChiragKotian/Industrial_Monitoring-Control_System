@@ -2,6 +2,8 @@
 #include "Node_Registry.h"
 #include "Node_Storage.h"
 #include "Node_CAN.h"
+#include <time.h>
+#include <sys/time.h>
 
 // 🎛️ HARDWARE PIN DEFINITIONS (Safe ESP32-S3 Pins)
 #define BTN_ENTER 1   
@@ -18,10 +20,30 @@ MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
 
 static uint8_t selectedLmpId = 0; 
 static uint8_t currentLiveId = 0;
+uint8_t NodeUI::sysHubCursorIndex = 0; 
+
+// 🕒 RTC Setup Variables (DD, MM, YYYY, HH, MM, SS)
+static uint8_t timeSetupCursor = 0; 
+static int timeSetupValues[6] = {1, 1, 2024, 0, 0, 0}; 
+
 static QueueHandle_t xHmiQueue = NULL;
 static uint32_t buttonPressStart[50] = {0}; 
 
-// ⚡ HARDWARE INTERRUPT
+// 🧮 TIME MATH HELPERS
+static uint8_t getMaxDays(uint8_t month, int year) {
+    if (month == 2) { 
+        if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) return 29;
+        return 28;
+    }
+    if (month == 4 || month == 6 || month == 9 || month == 11) return 30;
+    return 31;
+}
+
+static String padZero(int val) {
+    return (val < 10 ? "0" : "") + String(val);
+}
+
+// ⚡ HARDWARE INTERRUPT (Debounced for 150ms)
 static void IRAM_ATTR hmiButtonISR(void* arg) {
     uint32_t pin = (uint32_t)arg;
     uint32_t currentTime = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
@@ -31,7 +53,6 @@ static void IRAM_ATTR hmiButtonISR(void* arg) {
         HmiEvent evt;
         evt.type = EVENT_BUTTON_CLICK;
         evt.buttonId = pin;
-        Serial.println(pin);
         
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         xQueueSendFromISR(xHmiQueue, &evt, &xHigherPriorityTaskWoken);
@@ -53,10 +74,21 @@ void NodeUI::init() {
     
     uint8_t buttonPins[] = {BTN_ENTER, BTN_BACK, BTN_UP, BTN_DOWN, BTN_HOME}; 
     for(uint8_t pin : buttonPins) {
-        pinMode(pin, INPUT);
+        pinMode(pin, INPUT_PULLUP);
         attachInterruptArg(digitalPinToInterrupt(pin), hmiButtonISR, (void*)pin, FALLING); 
     }
-    Serial.println(F("[HMI Engine] 4-Page Flow Architecture Deployed."));
+    
+    // 🕒 THE RTC BASELINE KICKSTART:
+    // Guarantees clean relative trend data in the CSV even if user forgets to set time.
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec < 10000) { 
+        tv.tv_sec = 1704067200; // Epoch for 2024-01-01 00:00:00
+        tv.tv_usec = 0;
+        settimeofday(&tv, NULL);
+    }
+    
+    Serial.println(F("[HMI Engine] LMP & System Hub Architecture Deployed."));
 }
 
 void NodeUI::renderHeader(const String& modeIndicator){
@@ -68,7 +100,6 @@ void NodeUI::renderHeader(const String& modeIndicator){
     display.drawString(0, 0, "HPCL: " + String(totalFound) + " Nodes"); 
     
     display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    // 🪧 Appends [A] or [M] based on the parameter passed
     display.drawString(128, 0, "SS-A1 " + modeIndicator); 
     display.drawHorizontalLine(0, 12, 128);
 }
@@ -78,7 +109,7 @@ void NodeUI::drawWelcomeSplash() {
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.drawString(64, 6, "HPCL MUMBAI");
     display.setFont(ArialMT_Plain_10);
-    display.drawString(64, 26, "Substation Gateway v2.1");
+    display.drawString(64, 26, "Substation Gateway v2.5");
     display.drawString(64, 40, "Dev: Chirag Kotian");
     display.drawString(64, 52, "[CAN Boot Initializing]");
 }
@@ -102,9 +133,8 @@ void NodeUI::drawScanningPage() {
     display.drawProgressBar(4, 50, 120, 8, percentage);
 }
 
-// 📊 COMBINED PAGE 1 & 2 RENDERING (Auto or Manual)
+// 📊 LMP TELEMETRY (Pages 1 & 2)
 void NodeUI::drawTelemetryPage(uint8_t targetId, bool isAuto) {
-    // Inject the correct mode indicator flag
     renderHeader(isAuto ? "[A]" : "[M]");
     
     LMPDataRecord snapshot;
@@ -151,7 +181,7 @@ void NodeUI::drawTelemetryPage(uint8_t targetId, bool isAuto) {
     }
 }
 
-// ⚙️ PAGE 3 RENDERING
+// ⚙️ LMP DIAGNOSTICS & SETTINGS (Pages 3 & 4)
 void NodeUI::drawDeviceDiagnosticPage(uint8_t targetId) {
     renderHeader("[D]");
     LMPDataRecord snapshot;
@@ -170,23 +200,18 @@ void NodeUI::drawDeviceDiagnosticPage(uint8_t targetId) {
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     
     String binaryString = "";
-    for (int i = 7; i >= 0; i--) {
-        binaryString += (snapshot.errorCode & (1 << i)) ? "1" : "0";
-    }
+    for (int i = 7; i >= 0; i--) { binaryString += (snapshot.errorCode & (1 << i)) ? "1" : "0"; }
     display.drawString(64, 30, binaryString);
     
     display.setFont(ArialMT_Plain_10);
     display.drawString(64, 50, "HEX VALUE: 0x" + String(snapshot.errorCode, HEX));
 }
 
-// 🛠️ PAGE 4 RENDERING
 void NodeUI::drawDeviceSettingsPage(uint8_t targetId) {
     renderHeader("[⚙️]");
-    
     display.setFont(ArialMT_Plain_10);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     display.drawString(0, 14, "SETTINGS -> NODE " + String(targetId));
-    
     display.drawString(0, 30, "Diag Polling Rate:");
     
     display.setFont(ArialMT_Plain_16);
@@ -194,10 +219,95 @@ void NodeUI::drawDeviceSettingsPage(uint8_t targetId) {
     display.drawString(64, 45, String(NodeCAN::currentPollingInterval) + " ms");
 }
 
-// 🕹️ THE 4-PAGE STATE MACHINE ROUTER
+// ==========================================
+// 🌐 GATEWAY SYSTEM HUB UI 
+// ==========================================
+void NodeUI::drawSysHubPage() {
+    renderHeader("[SYS]");
+    display.setFont(ArialMT_Plain_10);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.drawString(0, 14, "GATEWAY CONTROL PANEL");
+    
+    String menuItems[] = {"1. System Health", "2. Gateway Diagnostics", "3. Configure RTC Time"};
+    for (int i = 0; i < 3; i++) {
+        if (i == sysHubCursorIndex) display.drawString(0, 28 + (i * 11), "> " + menuItems[i]); 
+        else display.drawString(10, 28 + (i * 11), menuItems[i]);       
+    }
+}
+
+void NodeUI::drawSysHealthPage() {
+    renderHeader("[SYS]");
+    display.setFont(ArialMT_Plain_10);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.drawString(0, 14, "NETWORK OVERVIEW");
+    
+    uint8_t activeNodes[MAX_NODE_ID];
+    uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+    
+    // 🕒 FETCH THE LIVE RUNNING TIME FROM THE ESP32
+    struct tm timeinfo;
+    String liveTime = "--:--:--";
+    String liveDate = "--/--/----";
+    if(getLocalTime(&timeinfo, 10)) { 
+        char timeStringBuff[10];
+        strftime(timeStringBuff, sizeof(timeStringBuff), "%H:%M:%S", &timeinfo);
+        liveTime = String(timeStringBuff);
+        
+        char dateStringBuff[12];
+        strftime(dateStringBuff, sizeof(dateStringBuff), "%d/%m/%Y", &timeinfo);
+        liveDate = String(dateStringBuff);
+    }
+    
+    // Reorganized to make room for the full date and time string
+    display.drawString(0, 26, "LMPs: " + String(totalFound));
+    display.drawString(64, 26, "SD: " + String(NodeStorage::sdAvailable ? "OK" : "ERR"));
+    
+    display.drawString(0, 38, "CAN:  OK");
+    display.drawString(64, 38, "LoRa: STBY");
+    
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.drawString(64, 52, liveDate + "  " + liveTime); // E.g., "15/08/2026  14:30:00"
+}
+
+void NodeUI::drawSysDiagsPage() {
+    renderHeader("[SYS]");
+    display.setFont(ArialMT_Plain_10);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.drawString(0, 14, "GATEWAY DIAGNOSTICS");
+    
+    display.setFont(ArialMT_Plain_16);
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.drawString(64, 30, "00000000"); 
+    
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(64, 50, "HEX VALUE: 0x00");
+}
+
+void NodeUI::drawSysTimeSetupPage() {
+    renderHeader("[SYS]");
+    display.setFont(ArialMT_Plain_10);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    display.drawString(0, 14, "SET GATEWAY RTC TIME");
+    
+    // Utilizing padZero() so it always looks clean: "05 / 09 / 2026"
+    String d = (timeSetupCursor==0 ? ">" : "") + padZero(timeSetupValues[0]);
+    String m = (timeSetupCursor==1 ? ">" : "") + padZero(timeSetupValues[1]);
+    String y = (timeSetupCursor==2 ? ">" : "") + String(timeSetupValues[2]);
+    
+    String hr = (timeSetupCursor==3 ? ">" : "") + padZero(timeSetupValues[3]);
+    String mn = (timeSetupCursor==4 ? ">" : "") + padZero(timeSetupValues[4]);
+    String sc = (timeSetupCursor==5 ? ">" : "") + padZero(timeSetupValues[5]);
+
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.drawString(64, 28, d + " / " + m + " / " + y);
+    display.drawString(64, 42, hr + " : " + mn + " : " + sc);
+    
+    display.drawString(64, 54, "[ENTER=Next, BACK=Save]");
+}
+
+// 🕹️ THE COMBINED ROUTING MATRIX
 void NodeUI::handleButtonPush(uint8_t buttonId) {
     
-    // 🏠 GLOBAL OVERRIDE
     if (buttonId == BTN_HOME) { 
         activeMenuState = MENU_AUTO_DASHBOARD;
         NodeCAN::activeDiagnosticNode = 0; 
@@ -211,6 +321,10 @@ void NodeUI::handleButtonPush(uint8_t buttonId) {
             if (buttonId == BTN_ENTER) { 
                 activeMenuState = MENU_MANUAL_TELEMETRY;
                 selectedLmpId = currentLiveId; 
+            }
+            else if (buttonId == BTN_BACK) {
+                activeMenuState = MENU_SYS_HUB;
+                sysHubCursorIndex = 0;
             }
             break;
             
@@ -229,39 +343,31 @@ void NodeUI::handleButtonPush(uint8_t buttonId) {
                 uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
                 if (totalFound > 1) {
                     uint8_t currentIndex = 0;
-                    for (uint8_t i = 0; i < totalFound; i++) {
-                        if (activeNodes[i] == selectedLmpId) currentIndex = i;
-                    }
-                    if (buttonId == BTN_UP) { 
-                        currentIndex = (currentIndex + 1) % totalFound;
-                    } else if (buttonId == BTN_DOWN) { 
-                        currentIndex = (currentIndex == 0) ? (totalFound - 1) : (currentIndex - 1);
-                    }
+                    for (uint8_t i = 0; i < totalFound; i++) { if (activeNodes[i] == selectedLmpId) currentIndex = i; }
+                    if (buttonId == BTN_UP) currentIndex = (currentIndex + 1) % totalFound; 
+                    else if (buttonId == BTN_DOWN) currentIndex = (currentIndex == 0) ? (totalFound - 1) : (currentIndex - 1); 
                     selectedLmpId = activeNodes[currentIndex];
                 }
             }
             break;
-            
-        // --- PAGE 3: DIAGNOSTICS ---
+
+        // --- PAGE 3: LMP DIAGNOSTICS ---
         case MENU_DEVICE_DIAGS:
             if (buttonId == BTN_ENTER) {
                 activeMenuState = MENU_DEVICE_SETTINGS;
             }
             else if (buttonId == BTN_BACK) { 
                 activeMenuState = MENU_MANUAL_TELEMETRY;
-                NodeCAN::activeDiagnosticNode = 0; // Stop Targeted Polling
+                NodeCAN::activeDiagnosticNode = 0; 
             }
-            // Optional: You can still allow UP/DOWN to scroll through nodes here if you want!
             else if (buttonId == BTN_UP || buttonId == BTN_DOWN) {
                 uint8_t activeNodes[MAX_NODE_ID];
                 uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
                 if (totalFound > 1) {
                     uint8_t currentIndex = 0;
-                    for (uint8_t i = 0; i < totalFound; i++) {
-                        if (activeNodes[i] == selectedLmpId) currentIndex = i;
-                    }
-                    if (buttonId == BTN_UP) { currentIndex = (currentIndex + 1) % totalFound; } 
-                    else if (buttonId == BTN_DOWN) { currentIndex = (currentIndex == 0) ? (totalFound - 1) : (currentIndex - 1); }
+                    for (uint8_t i = 0; i < totalFound; i++) { if (activeNodes[i] == selectedLmpId) currentIndex = i; }
+                    if (buttonId == BTN_UP) currentIndex = (currentIndex + 1) % totalFound; 
+                    else if (buttonId == BTN_DOWN) currentIndex = (currentIndex == 0) ? (totalFound - 1) : (currentIndex - 1); 
                     selectedLmpId = activeNodes[currentIndex];
                     NodeCAN::activeDiagnosticNode = selectedLmpId;
                     NodeCAN::requestFreshDiagnostics(selectedLmpId); 
@@ -269,23 +375,110 @@ void NodeUI::handleButtonPush(uint8_t buttonId) {
             }
             break;
             
-        // --- PAGE 4: SETTINGS ---
+        // --- PAGE 4: LMP SETTINGS ---
         case MENU_DEVICE_SETTINGS:
             if (buttonId == BTN_BACK) {
                 activeMenuState = MENU_DEVICE_DIAGS;
             }
-            else if (buttonId == BTN_UP) { 
-                if (NodeCAN::currentPollingInterval <= 4500) {
-                    NodeCAN::currentPollingInterval += 500;
-                }
+            else if (buttonId == BTN_UP && NodeCAN::currentPollingInterval <= 4500) { 
+                NodeCAN::currentPollingInterval += 500;
             }
-            else if (buttonId == BTN_DOWN) { 
-                if (NodeCAN::currentPollingInterval >= 1000) {
-                    NodeCAN::currentPollingInterval -= 500;
+            else if (buttonId == BTN_DOWN && NodeCAN::currentPollingInterval >= 1000) { 
+                NodeCAN::currentPollingInterval -= 500;
+            }
+            break;
+
+        // ==========================================
+        // 🌐 GATEWAY SYSTEM MENUS
+        // ==========================================
+        case MENU_SYS_HUB:
+            if (buttonId == BTN_BACK) activeMenuState = MENU_AUTO_DASHBOARD;
+            else if (buttonId == BTN_UP && sysHubCursorIndex > 0) sysHubCursorIndex--;
+            else if (buttonId == BTN_DOWN && sysHubCursorIndex < 2) sysHubCursorIndex++;
+            else if (buttonId == BTN_ENTER) {
+                if (sysHubCursorIndex == 0) activeMenuState = MENU_SYS_HEALTH;
+                else if (sysHubCursorIndex == 1) activeMenuState = MENU_SYS_DIAGS;
+                else if (sysHubCursorIndex == 2) {
+                    activeMenuState = MENU_SYS_TIME_SETUP;
+                    timeSetupCursor = 0; 
+                    
+                    // 🕒 PRE-FILL WITH LIVE OS CLOCK
+                    struct tm timeinfo;
+                    if(getLocalTime(&timeinfo, 10)) {
+                        timeSetupValues[0] = timeinfo.tm_mday;
+                        timeSetupValues[1] = timeinfo.tm_mon + 1;
+                        timeSetupValues[2] = timeinfo.tm_year + 1900;
+                        timeSetupValues[3] = timeinfo.tm_hour;
+                        timeSetupValues[4] = timeinfo.tm_min;
+                        timeSetupValues[5] = timeinfo.tm_sec;
+                    }
                 }
             }
             break;
             
+        case MENU_SYS_HEALTH:
+        case MENU_SYS_DIAGS:
+            if (buttonId == BTN_BACK) activeMenuState = MENU_SYS_HUB;
+            break;
+            
+        case MENU_SYS_TIME_SETUP:
+            if (buttonId == BTN_BACK) {
+                // 🕒 USER SAVED THE TIME: Inject it into the OS Clock
+                struct tm t;
+                t.tm_mday = timeSetupValues[0];
+                t.tm_mon  = timeSetupValues[1] - 1;
+                t.tm_year = timeSetupValues[2] - 1900;
+                t.tm_hour = timeSetupValues[3];
+                t.tm_min  = timeSetupValues[4];
+                t.tm_sec  = timeSetupValues[5];
+                
+                time_t timeSinceEpoch = mktime(&t);
+                struct timeval now;
+                now.tv_sec = timeSinceEpoch;
+                now.tv_usec = 0;
+                settimeofday(&now, NULL);
+
+                activeMenuState = MENU_SYS_HUB;
+                Serial.println(F("💾 RTC Time Synced to internal ESP32 Hardware Timer."));
+            }
+            else if (buttonId == BTN_ENTER) {
+                timeSetupCursor++;
+                if (timeSetupCursor > 5) timeSetupCursor = 0; 
+            }
+            else if (buttonId == BTN_UP || buttonId == BTN_DOWN) {
+                // 1. Change the Value
+                if (buttonId == BTN_UP) timeSetupValues[timeSetupCursor]++;
+                else timeSetupValues[timeSetupCursor]--;
+
+                // 2. Apply "Smart Wrap-Around" Bounds 
+                if (timeSetupCursor == 0) { // Day
+                    uint8_t maxD = getMaxDays(timeSetupValues[1], timeSetupValues[2]);
+                    if (timeSetupValues[0] > maxD) timeSetupValues[0] = 1;
+                    else if (timeSetupValues[0] < 1) timeSetupValues[0] = maxD;
+                }
+                else if (timeSetupCursor == 1) { // Month
+                    if (timeSetupValues[1] > 12) timeSetupValues[1] = 1;
+                    else if (timeSetupValues[1] < 1) timeSetupValues[1] = 12;
+                    uint8_t maxD = getMaxDays(timeSetupValues[1], timeSetupValues[2]);
+                    if (timeSetupValues[0] > maxD) timeSetupValues[0] = maxD;
+                }
+                else if (timeSetupCursor == 2) { // Year
+                    if (timeSetupValues[2] > 2099) timeSetupValues[2] = 2024;
+                    else if (timeSetupValues[2] < 2024) timeSetupValues[2] = 2099;
+                    uint8_t maxD = getMaxDays(timeSetupValues[1], timeSetupValues[2]);
+                    if (timeSetupValues[0] > maxD) timeSetupValues[0] = maxD;
+                }
+                else if (timeSetupCursor == 3) { // Hour
+                    if (timeSetupValues[3] > 23) timeSetupValues[3] = 0;
+                    else if (timeSetupValues[3] < 0) timeSetupValues[3] = 23;
+                }
+                else if (timeSetupCursor == 4 || timeSetupCursor == 5) { // Min/Sec
+                    if (timeSetupValues[timeSetupCursor] > 59) timeSetupValues[timeSetupCursor] = 0;
+                    else if (timeSetupValues[timeSetupCursor] < 0) timeSetupValues[timeSetupCursor] = 59;
+                }
+            }
+            break;
+
         default: break;
     }
 }
@@ -307,7 +500,8 @@ void NodeUI::runHMITask(void* pvParameters) {
             
             NetworkState busState = NodeCAN::getBusState();
             
-            if (activeMenuState == MENU_WELCOME_SPLASH || activeMenuState == MENU_SCANNING_BUS) {
+            // Only update system state routing if we are on the top layer
+            if (activeMenuState == MENU_WELCOME_SPLASH || activeMenuState == MENU_SCANNING_BUS || activeMenuState == MENU_AUTO_DASHBOARD) {
                 if (busState == STATE_STANDBY || busState == STATE_INIT_DISCOVERY) {
                     activeMenuState = MENU_WELCOME_SPLASH;
                 } else if (busState == STATE_COLLECTING_REPLIES || busState == STATE_SEND_ACK_SEQUENTIAL || busState == STATE_RECHECK_WINDOW) {
@@ -331,15 +525,21 @@ void NodeUI::runHMITask(void* pvParameters) {
                     if (totalFound > 0) {
                         uint32_t activeIndex = (millis() / 3000) % totalFound; 
                         currentLiveId = activeNodes[activeIndex];
-                        drawTelemetryPage(currentLiveId, true); // true = Auto flag
+                        drawTelemetryPage(currentLiveId, true);
                     } else {
                         drawTelemetryPage(0, true);
                     }
                     break;
                 }
-                case MENU_MANUAL_TELEMETRY: drawTelemetryPage(selectedLmpId, false); break; // false = Manual flag
+                case MENU_MANUAL_TELEMETRY: drawTelemetryPage(selectedLmpId, false); break;
                 case MENU_DEVICE_DIAGS: drawDeviceDiagnosticPage(selectedLmpId); break;
                 case MENU_DEVICE_SETTINGS: drawDeviceSettingsPage(selectedLmpId); break;
+                
+                // 🌐 GATEWAY SYSTEM PAGES
+                case MENU_SYS_HUB: drawSysHubPage(); break;
+                case MENU_SYS_HEALTH: drawSysHealthPage(); break;
+                case MENU_SYS_DIAGS: drawSysDiagsPage(); break;
+                case MENU_SYS_TIME_SETUP: drawSysTimeSetupPage(); break;
             }
             display.display();
         }
