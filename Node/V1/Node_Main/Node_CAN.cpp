@@ -3,6 +3,7 @@
 #include "Node_Storage.h"
 #include "Node_UI.h"
 #include <time.h>
+#include "Node_LoRa.h"
 
 // 📦 Protocol Definition Layer
 #define DATA_STREAM         0x04
@@ -173,6 +174,8 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, 0.0f);
                             logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                            // Shoot the exact same CSV data string into the air!
+                            NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
                     }
@@ -189,6 +192,8 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
                             logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + ";RH:" + String(humidity, 1) + "%\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                            // Shoot the exact same CSV data string into the air!
+                            NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
                     }
@@ -205,6 +210,8 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, objectTemp2, ambientTemp, 0.0f);
                             logLine += "PHASE_A:" + String(objectTemp1, 1) + ";PHASE_B:" + String(objectTemp2, 1) + ";SHARED_AMB:" + String(ambientTemp, 1) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                            // Shoot the exact same CSV data string into the air!
+                            NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
                     }
@@ -215,6 +222,8 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, 0.0f, 0.0f, 0.0f, 0.0f); 
                             logLine += "ACTUATOR_MASK:0x" + String(switchStatusMask, HEX) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
+                            // Shoot the exact same CSV data string into the air!
+                            NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
                     }
