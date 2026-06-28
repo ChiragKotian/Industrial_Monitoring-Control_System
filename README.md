@@ -56,6 +56,7 @@ graph TD
     LMP1 <==>|Wired CAN Bus 250kbps| GW
     LMP2 <==>|Wired CAN Bus 250kbps| GW
     LMP3 <==>|Wired CAN Bus 250kbps| GW
+    LMP4 <==>|Wired CAN Bus 250kbps| GW
     
     GW ==>|LoRa IN865 Radio| SenseCAP
     SenseCAP ==>|Local Wi-Fi UDP| Python
