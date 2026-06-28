@@ -423,3 +423,11 @@ We successfully built, programmed, and validated the entire multi-tier test-bed 
 
 ---
 *Developed for the HPCL Mumbai Refinery Substation Monitoring Initiative.* *Maintained by: [[Chirag Kotian](https://github.com/ChiragKotian)]*
+
+## ⚖️ 12. License & Attribution
+
+This project is licensed under the **MIT License**. 
+
+You are free to use, modify, distribute, and integrate this architecture into your own commercial or private projects, provided that you give appropriate credit to the original author(s) by including the original copyright notice in your copies or substantial uses of the work.
+
+See the `LICENSE` file in the root directory for full terms.
