@@ -38,7 +38,6 @@ AgnostiLink is designed to scale spatially across massive industrial campuses wi
 
 ### 🗺️ 3.2 Network Flow Diagram
 
-*(GitHub will automatically render this diagram)*
 
 ```mermaid
 graph TD
