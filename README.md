@@ -315,7 +315,7 @@ One of the primary goals of AgnostiLink was to allow future engineers to deploy 
 We achieved this by utilizing **C++ Preprocessor Directives** (`#if`, `#elif`) inside `LMP_Hardware.cpp`.
 
 #### How to Configure an LMP Profile:
-The core networking code (`lmp_code.ino`) is completely blind to what hardware is attached. It merely calls `LMP_Hardware::refresh()` and `LMP_Hardware::sendStream()`. 
+The core networking code (`LMP_code.ino`) is completely blind to what hardware is attached. It merely calls `LMP_Hardware::refresh()` and `LMP_Hardware::sendStream()`. 
 
 To configure a blank Arduino Nano to act as a specific sensor node, a technician only needs to change two lines in `LMP_Hardware.h`:
 ```cpp
