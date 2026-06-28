@@ -53,10 +53,10 @@ graph TD
     end
 
     %% Connections
-    LMP1 <==>|Wired CAN Bus 250kbps| GW
-    LMP2 <==>|Wired CAN Bus 250kbps| GW
-    LMP3 <==>|Wired CAN Bus 250kbps| GW
-    LMP4 <==>|Wired CAN Bus 250kbps| GW
+    LMP1 <==>|Wired CAN Bus 250kbps via HSPI| GW
+    LMP2 <==>|Wired CAN Bus 250kbps via HSPI| GW
+    LMP3 <==>|Wired CAN Bus 250kbps via HSPI| GW
+    LMP4 <==>|Wired CAN Bus 250kbps via HSPI| GW
     
     GW ==>|LoRa IN865 Radio| SenseCAP
     SenseCAP ==>|Local Wi-Fi UDP| Python
