@@ -274,3 +274,44 @@ stateDiagram-v2
     Node_Settings --> EMERGENCY_OVERRIDE : CAN Rx [0xFF/0x09]
     EMERGENCY_OVERRIDE --> Autoscroll_Grid : Fault Cleared
 ```
+## 🎛️ 7. Edge Hardware: The Local Monitoring Panel (LMP) Firmware
+
+While the ESP32 Master Gateway handles complex routing and LoRa transmission, the actual data acquisition happens at the extreme edge: the **Local Monitoring Panels (LMPs)**. 
+
+Each LMP is powered by an 8-bit Arduino Nano. In standard hobbyist code, an Arduino relies heavily on `delay()` functions and crashes entirely if an $I^2C$ sensor is unplugged. To survive in a high-EMI substation, the LMP firmware was engineered with a **Non-Blocking, Self-Healing, and Preprocessor-Driven Architecture**.
+
+### 🧱 7.1 The Asynchronous "Bare-Metal" Loop
+The Arduino Nano lacks the RAM to run FreeRTOS. Instead, `lmp_code.ino` utilizes a highly disciplined, event-driven `loop()` structure.
+
+* **Zero `delay()` Tolerance:** The code never uses blocking delays. The processor rapidly cycles, continuously polling the MCP2515 CAN controller. This ensures that incoming opcodes (like the `0x09` Emergency Stop or `0x07` Set Poll Rate) are serviced instantaneously.
+* **Dynamic Background Timers:** Sensor polling and CAN transmissions operate on independent timers (`telemetryInterval`). An operator can send a CAN command to change this interval from 4000ms to 1000ms on the fly, and the Nano will seamlessly adjust its telemetry output rate without dropping a single CAN frame.
+
+### 🛡️ 7.2 Hardware Watchdogs & "Self-Healing" Logic
+Industrial sensors placed on vibrating motors or high-voltage transformers are prone to physical wire degradation. The LMP firmware is designed to survive catastrophic hardware failures automatically.
+
+1. **The $I^2C$ Freeze Trap (`Wire.setWireTimeout`):** Standard Arduino `Wire.h` libraries will infinitely loop (hang the entire processor) if an $I^2C$ device loses power during a transmission. We implemented `Wire.setWireTimeout(25000, true);` in the `init()` block. If a sensor line is severed, the Nano forces the hardware to abort the electrical operation after 25ms, saving the networking loop from a fatal freeze.
+2. **The "Self-Healing" `refresh()` Cycle:** Before every reading, the LMP checks its `global_error_register`. 
+   * **If Healthy (Bit = 0):** It reads the sensor. If the reading returns a fault, it sets the error bit to `1`, zeroes out the payload to prevent transmitting stale data (`panel_obj1 = 0.0f`), and alerts the network.
+   * **If Faulted (Bit = 1):** It bypasses the read logic and actively attempts to re-initialize the sensor (`MLX_sens::initMLX()`). If a technician plugs the broken wire back in, the initialization succeeds, the LMP clears the error bit (`0`), and telemetry resumes automatically—no system reboot required.
+
+---
+
+### 🔌 7.3 True Modularity via Preprocessor Compilation
+One of the primary goals of AgnostiLink was to allow future engineers to deploy new sensor profiles without having to understand or rewrite the complex CAN networking logic.
+
+We achieved this by utilizing **C++ Preprocessor Directives** (`#if`, `#elif`) inside `LMP_Hardware.cpp`.
+
+#### How to Configure an LMP Profile:
+The core networking code (`lmp_code.ino`) is completely blind to what hardware is attached. It merely calls `LMP_Hardware::refresh()` and `LMP_Hardware::sendStream()`. 
+
+To configure a blank Arduino Nano to act as a specific sensor node, a technician only needs to change two lines in `LMP_Hardware.h`:
+```cpp
+#define LMP_ID       14   // Set the physical CAN ID
+#define LMP_GROUP    2    // Set the Hardware Profile (1=IR, 2=IR+Hum, 3=Dual IR, 4=Actuator)
+```
+Because of the `#if (LMP_GROUP == 2)` directives in the `.cpp` file, the Arduino compiler will entirely ignore the code for Groups 1, 3, and 4. It will only compile the specific $I^2C$ libraries, memory allocations, and payload bit-shifting math required for Group 2.
+
+**The Result:**
+* **Rapid Deployment:** A junior technician can deploy a new sensor node in 30 seconds simply by changing two numbers in the header file.
+* **SRAM Protection:** The Arduino Nano’s tiny 2KB SRAM is protected because it only ever holds the exact libraries and variables it needs for its assigned task.
+* **Infinite Expandability:** Expanding the system to include a new "Group 5" (e.g., Vibration Sensors) simply requires adding a new `#elif (LMP_GROUP == 5)` block, leaving the mission-critical CAN loop completely untouched.
