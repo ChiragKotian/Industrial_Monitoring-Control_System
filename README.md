@@ -27,40 +27,54 @@ The system relies on a **two-tier communication architecture**:
 
 ---
 
-## 🏗️ 3. High-Level System Architecture
+## 🏗️ 3. System Architecture & Physical Topology
+
+AgnostiLink is designed to scale spatially across massive industrial campuses without requiring complex IT infrastructure or Wi-Fi mesh networks. The deployment topology is divided into three distinct physical layers:
+
+### 📍 3.1 The Deployment Strategy
+* **The 100-Meter CAN Cell:** The physical CAN bus is highly robust but distance-constrained by electrical resistance. Therefore, **one Master Node (ESP32 Gateway)** is deployed to act as the localized hub for multiple equipment LMPs clustered within a maximum **100-meter radius**. 
+* **Substation Scalability:** A small switchyard may only require a single Node. However, a massive refinery substation can deploy multiple independent Nodes (e.g., Node A for the North Transformer Bank, Node B for the South Motor Control Center), with each Node managing its own localized 100m CAN network.
+* **The Wireless Funnel:** Regardless of whether a facility has 1 Node or 50 Nodes, **all of them broadcast wirelessly to a single, centralized LoRaWAN Gateway** (SenseCAP M2). This completely eliminates the need to run kilometers of fiber-optic cable back to the main server room.
+
+### 🗺️ 3.2 Network Flow Diagram
+
+*(GitHub will automatically render this diagram)*
 
 ```mermaid
 graph TD
-    subgraph "Level 1: Field Edge (LMPs)"
-        LMP1[LMP 14<br/>Arduino Nano + CAN<br/>Group 1: IR Temp]
-        LMP2[LMP 22<br/>Arduino Nano + CAN<br/>Group 2: IR Temp + Humidity]
-        LMP3[LMP 23<br/>Arduino Nano + CAN<br/>Group 3: 2 IR Temp sensors]
-        LMP4[LMP 101<br/>Arduino Nano + CAN<br/>Group 4: Relay/Switches/Actuator]
+    subgraph "Level 1: Field Edge (100m Wire Radius)"
+        LMP1[LMP 14<br/>Group 1: IR Temp]
+        LMP2[LMP 22<br/>Group 2: IR Temp + Hum]
+        LMP3[LMP 101<br/>Group 4: Actuator]
     end
 
-    subgraph "Level 2: Substation Master(Node)"
-        GW[Heltec ESP32-S3 Gateway<br/>FreeRTOS Engine]
-        OLED[Local OLED HMI]
-        SD[MicroSD Offline Backup]
+    subgraph "Level 2: Substation Zone Masters"
+        GW1[Node A: ESP32 Gateway<br/>(Zone 1 Master)]
+        GW2[Node B: ESP32 Gateway<br/>(Zone 2 Master)]
+        GWn[Node N: ESP32 Gateway<br/>(Expansion)]
         
-        GW -->|I2C| OLED
-        GW -->|HSPI| SD
+        OLED[Local OLED HMI]
+        SD[MicroSD Backup]
+        
+        GW1 -->|I2C| OLED
+        GW1 -->|HSPI| SD
     end
 
-    subgraph "Level 3: IT & Software (Air-Gapped)"
-        SenseCAP[SenseCAP M2<br/>LoRaWAN Gateway]
-        Python[Python UDP Listener<br/>Port 1700]
+    subgraph "Level 3: IT Data Center (Air-Gapped)"
+        SenseCAP[Single SenseCAP M2<br/>LoRaWAN Gateway]
+        Python[Central Python Server<br/>UDP Port 1700]
     end
 
     %% Connections
-    LMP1 <==>|Wired CAN Bus 250kbps via HSPI| GW
-    LMP2 <==>|Wired CAN Bus 250kbps via HSPI| GW
-    LMP3 <==>|Wired CAN Bus 250kbps via HSPI| GW
-    LMP4 <==>|Wired CAN Bus 250kbps via HSPI| GW
+    LMP1 <==>|Wired CAN Bus via HSPI| GW1
+    LMP2 <==>|Wired CAN Bus via HSPI| GW1
+    LMP3 <==>|Wired CAN Bus via HSPI| GW1
     
-    GW ==>|LoRa IN865 Radio via FSPI| SenseCAP
-    SenseCAP ==>|Local Wi-Fi UDP| Python
-
+    GW1 == "LoRa IN865 Radio (via FSPI)" ===> SenseCAP
+    GW2 -. "LoRa IN865 Radio" .-> SenseCAP
+    GWn -. "LoRa IN865 Radio" .-> SenseCAP
+    
+    SenseCAP ==>|Local Wi-Fi / Ethernet| Python
 ```
 ## ✨ 4. Core Features & Engineering Innovations
 
