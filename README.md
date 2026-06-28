@@ -102,3 +102,87 @@ The system is not just a passive listener; it is a full command-and-control suit
 * **Substation UI:** A built-in 128x64 OLED display utilizing a lag-free, double-buffered rendering engine. It features a 5-button tactile interface (Up, Down, Enter, Back, Home) driven by a strict State Machine.
 * **Global Emergency Overrides:** No matter how deep a user navigates into the settings menu to adjust polling intervals, if a critical Level-2 temperature spike occurs on the CAN bus, the UI immediately hijacks the screen to flash a localized Danger Tag.
 * **Actuator Downlink:** The network architecture reserves specific Node IDs (161–240) for Actuators. The central IT server can dispatch AES-encrypted command payloads back down the LoRa pipeline. The Gateway decrypts these, translates them into `CMD_ACTUATE` CAN Opcodes, and directs specific LMPs to toggle their onboard relay control circuits—completing the loop from cloud dashboard to physical edge device.
+
+## 🖧 5. The AgnostiLink CAN Protocol (AL-CAN)
+
+At the heart of the field network is a custom, bare-metal implementation of the Controller Area Network (CAN 2.0A) standard. To maximize efficiency and ensure deterministic performance under heavy loads, we bypassed text-heavy protocols (like JSON) and built the **AL-CAN Protocol**: a strict, byte-level quantization and multi-frame assembly standard.
+
+### 📡 5.1 Network Addressing & Hardware Limits
+The system uses standard 11-bit CAN Identifiers. Addressing is asymmetrical and physically prioritized. In CAN physics, lower IDs overwrite higher IDs on the electrical wire during collisions.
+
+* **Master Gateway (ESP32-S3):** Hardcoded to **CAN ID `0x00`**. This ensures that network-critical commands (Discovery, Actuation, Resend Requests) possess absolute priority over the bus and cannot be delayed by sensor telemetry.
+* **Telemetry LMPs (Sensors):** Assigned CAN IDs from **`0x01` to `0xA0` (1–160)**.
+* **Actuator LMPs (Relays/Switches):** Assigned CAN IDs from **`0xA1` to `0xF0` (161–240)**.
+* **Network Capacity:** The 1-byte addressing naturally allows for **240 active LMPs** per substation bus. 
+
+---
+
+### 📦 5.2 Dynamic Payload Structure & Multi-Frame Assembly
+A fundamental constraint of standard CAN is that a single frame can only hold **8 Bytes** of data. However, our LMPs often generate larger payloads (e.g., dual-phase temperatures, humidity, and error masks). 
+
+To solve this, AL-CAN implements a **Fragmented Multi-Frame Assembly Line** (`LMPAssemblyBuffer`). Instead of cramming data, the protocol dynamically shifts the meaning of the bytes based on the Instruction ID (Opcode). 
+
+#### The Standard AL-CAN 8-Byte Frame Map:
+| Byte | Field | Description / Context |
+| :--- | :--- | :--- |
+| **0** | `TARGET/SENDER_ID` | The Node ID targeted by the Master, or the LMP ID replying (0–240). |
+| **1** | `INSTRUCTION_ID` | The Opcode (See 5.3). Defines the exact behavior of the frame. |
+| **2** | `CONTEXT_BYTE_1` | Varies: `Packets Left` (0x04) / `Error Mask` (0x06) / `Poll Rate High` (0x07). |
+| **3** | `CONTEXT_BYTE_2` | Varies: `Group Type` (0x01) / `Poll Rate Low` (0x07) / `Data Chunk` (0x04). |
+| **4** | `DATA_0` | Fragmented payload chunk. |
+| **5** | `DATA_1` | Fragmented payload chunk. |
+| **6** | `DATA_2` | Fragmented payload chunk. |
+| **7** | `DATA_3` | Fragmented payload chunk. |
+
+#### How Data Larger Than 8 Bytes is Handled:
+When an LMP sends telemetry (Opcode `0x04`), **Byte 2 acts as a reverse counter (`packetsLeft`)**.
+1. The Gateway receives the first frame, sees `packetsLeft > 0`, and opens a 32-byte staging buffer in RAM (`assemblyLine[NodeID]`).
+2. It strips Bytes 3 through 7 and writes them into the buffer (`session.bytesWritten`).
+3. As subsequent frames arrive, it appends the new data chunks.
+4. When a frame arrives with `packetsLeft == 0`, the Gateway locks the buffer, extracts the complete industrial CSV string, and executes the save/transmit logic.
+
+---
+
+### 🎛️ 5.3 The Instruction Set (Opcodes)
+Byte 1 acts as the network router. The protocol supports up to 255 distinct commands. The current firmware state machine utilizes the following:
+
+* `0x01` **[CMD_DISCOVER]:** Phase 1 Boot broadcast. Prompts LMPs to reply with their hardware Group Type.
+* `0x02` **[CMD_SHIFT_MODE]:** Broadcasted by the Gateway to signal the end of the Discovery Phase and transition the network to Operational Listening.
+* `0x04` **[DATA_STREAM]:** The standard multi-frame payload containing continuous sensor telemetry.
+* `0x05` **[CMD_REQ_RESEND]:** Gateway command targeting a specific LMP to retransmit a dropped/corrupted multi-frame packet (Triggered by the Assembly Line).
+* `0x06` **[CMD_REQ_DIAG]:** Gateway command forcing an LMP to bypass standard polling and instantly report its live Error Mask.
+* `0x07` **[CMD_SET_POLL]:** Downlink command to change an LMP's physical polling speed. Bytes 2 & 3 contain the new interval.
+* `0x09` **[CMD_PANIC]:** Emergency override broadcasted by an LMP if it detects an immediate hardware or environmental failure (`0xFF` error state).
+* `0x0A` **[CMD_GET_POLL]:** Gateway command querying the LMP's current confirmed polling rate to sync the OLED HMI settings.
+
+---
+
+### 🧩 5.4 Group Profiles & Telemetry Parsing
+Once the `DATA_STREAM` frames are completely assembled in RAM, the Gateway references the `GROUP_ID` it logged during the `0x01` Discovery Phase to decode the raw bytes. This ensures the Master Gateway never needs to be re-flashed when new LMPs are added.
+
+The system supports up to **255 hardware profiles**. Currently deployed formats:
+
+* **Group 1 (Standard IR Temp):**
+  * Parses 4 bytes. 
+  * Unpacks as: `OBJ1: XX.X; AMB: XX.X`
+* **Group 2 (HVAC / Ambient Profile):**
+  * Parses 5 bytes. 
+  * Unpacks as: `OBJ1: XX.X; AMB: XX.X; RH: XX.X%`
+* **Group 3 (Dual-Phase IR Temp):**
+  * Parses 6 bytes. 
+  * Unpacks as: `PHASE_A: XX.X; PHASE_B: XX.X; SHARED_AMB: XX.X`
+* **Group 4 (Actuators / Switches):**
+  * Parses 1 byte (Hex Mask).
+  * Unpacks as: `ACTUATOR_MASK: 0xXX`
+
+---
+
+### 🛡️ 5.5 Multi-Tier Dropped Packet Recovery
+Industrial substations generate massive electrical noise, which usually destroys Wi-Fi or I2C signals. The AL-CAN network guarantees data delivery through three layers of physical and software protection:
+
+1. **Hardware Arbitration (CSMA/CR Layer):**
+   CAN bus utilizes Carrier Sense Multiple Access with Collision Resolution. If LMP 14 and LMP 22 attempt to transmit telemetry at the exact same millisecond, the MCP2515 transceivers physically negotiate the line. The lower ID wins, and the losing LMP automatically holds its frame in a silicon buffer, re-transmitting the exact microsecond the line goes quiet.
+2. **Missing Fragment Detection (Software Layer):**
+   If a massive EMI spark destroys a specific fragment of a multi-frame `DATA_STREAM` transmission, the ESP32 Gateway's `LMPAssemblyBuffer` catches the discrepancy via the `expectedNextCount` tracking logic. 
+3. **Targeted Resend (`CMD_REQ_RESEND`):**
+   Upon detecting a dropped frame, the Gateway suspends parsing, issues Opcode `0x05` to the specific LMP, and increments a `retryCounter`. The LMP is allowed up to `MAX_RETRIES_ALLOWED` (3 attempts) to complete the multi-frame transfer before the Gateway flushes the corrupted buffer and moves on to the next task.
