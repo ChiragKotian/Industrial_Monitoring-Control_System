@@ -165,7 +165,7 @@ The system supports up to **255 hardware profiles**. Currently deployed formats:
 * **Group 1 (Standard IR Temp):**
   * Parses 4 bytes. 
   * Unpacks as: `OBJ1: XX.X; AMB: XX.X`
-* **Group 2 (HVAC / Ambient Profile):**
+* **Group 2 (IR Temp + Humidity):**
   * Parses 5 bytes. 
   * Unpacks as: `OBJ1: XX.X; AMB: XX.X; RH: XX.X%`
 * **Group 3 (Dual-Phase IR Temp):**
