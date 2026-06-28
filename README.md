@@ -238,7 +238,6 @@ Safety is the absolute highest priority. The `isEmergencyActive` boolean check s
 
 ### 📊 UI Flowchart
 
-*(GitHub will automatically render this diagram)*
 
 ```mermaid
 stateDiagram-v2
