@@ -186,3 +186,92 @@ Industrial substations generate massive electrical noise, which usually destroys
    If a massive EMI spark destroys a specific fragment of a multi-frame `DATA_STREAM` transmission, the ESP32 Gateway's `LMPAssemblyBuffer` catches the discrepancy via the `expectedNextCount` tracking logic. 
 3. **Targeted Resend (`CMD_REQ_RESEND`):**
    Upon detecting a dropped frame, the Gateway suspends parsing, issues Opcode `0x05` to the specific LMP, and increments a `retryCounter`. The LMP is allowed up to `MAX_RETRIES_ALLOWED` (3 attempts) to complete the multi-frame transfer before the Gateway flushes the corrupted buffer and moves on to the next task.
+
+
+## 🖥️ 6. Industrial HMI & Local UI Architecture
+
+In high-stress industrial environments, a field operator needs to read critical substation data in seconds without getting lost in complex menus. To achieve this, the AgnostiLink Gateway features a fully integrated **Human-Machine Interface (HMI)** driven by a deterministic FreeRTOS State Machine.
+
+### 📟 6.1 Hardware & Double-Buffered Display Engine
+* **Display:** 0.96-inch 128x64 monochrome OLED communicating via $I^2C$.
+* **Lag-Free Double-Buffering:** Standard microcontroller displays write pixel-by-pixel directly to the screen, causing a visible top-to-bottom "tearing" or "flicker" effect every time a sensor updates. We bypassed this by allocating a dedicated frame-buffer in the ESP32's RAM. The FreeRTOS UI task constructs the entire graphical frame invisibly in memory, and then blasts the completed frame to the OLED in a single high-speed burst. The result is a buttery-smooth, flicker-free industrial display.
+* **EMI Resilience (`Vext` Control):** Substations experience massive electromagnetic spikes that can physically freeze $I^2C$ OLED screens. By routing power through the ESP32-S3's `Vext` transistor, FreeRTOS can cleanly cut power to the screen and hard-reboot the display driver without resetting the main network processor, maintaining 100% CAN uptime.
+
+### 🕹️ 6.2 Breadcrumb Navigation & The 5-Button State Machine
+To keep the system "Newbie-Proof", we avoided touchscreens (which fail when operators wear heavy PPE gloves). Instead, navigation is handled by a 5-button tactile array mapped to hardware interrupts. 
+
+The UI employs a **Breadcrumb Architecture** (e.g., `[SYS > LMP 14 > ERR]`). This constant top-bar visual anchor ensures operators always know exactly how deep they are in the menu hierarchy and what they are currently editing.
+
+---
+
+### 🗺️ 6.3 The Deep Menu Hierarchy
+
+The interface strictly follows a logical flow to mimic professional SCADA HMIs:
+
+#### **Phase 1: Boot & Auto-Discovery**
+* **System Details Screen:** Upon power-up, the system displays the HPCL branding, firmware version, and core hardware checks to validate system integrity.
+* **Scanning Page:** The display shifts to a dynamic progress screen during the CAN Bus Discovery Phase, showing the network actively flooding the bus and locking in the addresses of connected LMPs.
+
+#### **Phase 2: Operational Monitoring**
+* **The Auto-Scrolling Grid:** Once discovery is complete, the UI defaults to an automated, rotating view of all active LMPs. This allows a technician to monitor the entire substation hands-free.
+
+#### **Phase 3: Deep-Dive & Manual Control**
+If an operator notices an anomaly on the Auto-Scrolling screen, they can intervene using the 5-button array:
+* **Manual Mode (Press `OK`):** Pauses the auto-scroll. The operator can now manually cycle through specific LMPs using the `UP` and `DOWN` buttons to observe live telemetry.
+* **Diagnostic View (Press `OK` again):** Dives into the selected LMP's **Error Byte**. The UI decodes the bitmask, instantly telling the operator if the node is healthy or suffering from specific faults (e.g., an unplugged $I^2C$ sensor wire).
+* **Network Override (Press `OK` again):** Enters the Configuration State. The operator can dynamically adjust the CAN bus polling interval for this specific LMP, ranging from aggressive (2.5 seconds) to passive (60 seconds) depending on monitoring needs.
+
+#### **Phase 4: Node Master Settings**
+Pressing `BACK` from the main Auto-Scrolling page brings the operator into the Master Gateway's configuration menu:
+1. **Clock Configuration:** Manually synchronize the internal RTC Date & Time for accurate SD card logging.
+2. **System Health Status:** A live readout of the Master Gateway's internal peripherals (SD Card mount status, LoRa Radio link status, and RTC health).
+3. **Master Error Byte:** Displays the localized diagnostic byte for the ESP32 Gateway itself.
+
+---
+
+### 🚨 6.4 The Global Emergency Override
+Safety is the absolute highest priority. The `isEmergencyActive` boolean check sits at the absolute top of the FreeRTOS UI drawing loop. 
+
+**No matter how deep an operator is in the settings menu, a critical fault instantly hijacks the screen to flash a localized Danger Tag (e.g., `CRITICAL FAULT: NODE 14`).** The screen remains locked in this highly visible strobe state until the physical error is cleared and the LMP restores its nominal Error Mask bit to `0`.
+
+---
+
+### 📊 UI Flowchart
+
+*(GitHub will automatically render this diagram)*
+
+```mermaid
+stateDiagram-v2
+    [*] --> Boot_SystemDetails : Power On
+    Boot_SystemDetails --> Scanning_Phase : Initialize CAN
+    Scanning_Phase --> Autoscroll_Grid : Discovery Complete
+
+    state Autoscroll_Grid {
+        [*] --> Auto_Rotating_LMPs
+    }
+
+    %% Forward Drill-Down (LMP Specific)
+    Autoscroll_Grid --> Manual_LMP_View : Press OK (ENTER)
+    Manual_LMP_View --> Diagnostic_Error_View : Press OK
+    Diagnostic_Error_View --> Set_Polling_Rate : Press OK
+
+    %% Backward Drill-Up
+    Set_Polling_Rate --> Diagnostic_Error_View : Press BACK
+    Diagnostic_Error_View --> Manual_LMP_View : Press BACK
+    Manual_LMP_View --> Autoscroll_Grid : Press BACK
+
+    %% Gateway Settings
+    Autoscroll_Grid --> Node_Settings : Press BACK
+    state Node_Settings {
+        [*] --> Set_RTC_Time
+        Set_RTC_Time --> View_System_Status : UP/DOWN
+        View_System_Status --> View_Gateway_Errors : UP/DOWN
+    }
+    Node_Settings --> Autoscroll_Grid : Press BACK
+
+    %% Emergency Override
+    Autoscroll_Grid --> EMERGENCY_OVERRIDE : CAN Rx [0xFF/0x09]
+    Manual_LMP_View --> EMERGENCY_OVERRIDE : CAN Rx [0xFF/0x09]
+    Node_Settings --> EMERGENCY_OVERRIDE : CAN Rx [0xFF/0x09]
+    EMERGENCY_OVERRIDE --> Autoscroll_Grid : Fault Cleared
+```
