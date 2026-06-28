@@ -34,7 +34,7 @@ graph TD
     subgraph "Level 1: Field Edge (LMPs)"
         LMP1[LMP 14<br/>Arduino Nano + CAN<br/>Group 1: IR Temp]
         LMP2[LMP 22<br/>Arduino Nano + CAN<br/>Group 2: IR Temp + Humidity]
-        LMP3[LMP 23<br/>Arduino Nano + CAN<br/>Group 2: 2 IR Temp sensors]
+        LMP3[LMP 23<br/>Arduino Nano + CAN<br/>Group 3: 2 IR Temp sensors]
         LMP4[LMP 101<br/>Arduino Nano + CAN<br/>Group 4: Relay/Switches/Actuator]
     end
 
