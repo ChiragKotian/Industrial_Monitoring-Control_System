@@ -32,12 +32,13 @@ The system relies on a **two-tier communication architecture**:
 ```mermaid
 graph TD
     subgraph "Level 1: Field Edge (LMPs)"
-        LMP1[LMP Node 14<br/>Arduino Nano + CAN<br/>Group 1: IR Temp]
-        LMP2[LMP Node 22<br/>Arduino Nano + CAN<br/>Group 2: HVAC/AHT21B]
-        LMP3[LMP Node 101<br/>Arduino Nano + CAN<br/>Group 4: Relay/Switches]
+        LMP1[LMP 14<br/>Arduino Nano + CAN<br/>Group 1: IR Temp]
+        LMP2[LMP 22<br/>Arduino Nano + CAN<br/>Group 2: IR Temp + Humidity]
+        LMP3[LMP 23<br/>Arduino Nano + CAN<br/>Group 2: 2 IR Temp sensors]
+        LMP4[LMP 101<br/>Arduino Nano + CAN<br/>Group 4: Relay/Switches(Actuator)]
     end
 
-    subgraph "Level 2: Substation Master"
+    subgraph "Level 2: Substation Master(Node)"
         GW[Heltec ESP32-S3 Gateway<br/>FreeRTOS Engine]
         OLED[Local OLED HMI]
         SD[MicroSD Offline Backup]
