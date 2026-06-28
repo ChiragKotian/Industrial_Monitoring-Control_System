@@ -61,7 +61,7 @@ graph TD
     GW ==>|LoRa IN865 Radio via FSPI| SenseCAP
     SenseCAP ==>|Local Wi-Fi UDP| Python
 
-
+```
 ## ✨ 4. Core Features & Engineering Innovations
 
 The AgnostiLink ecosystem was built to survive in unforgiving industrial environments. Standard hobbyist approaches (like running all code in a single `loop()`) fail under refinery conditions. Instead, this system utilizes enterprise-grade embedded architecture.
