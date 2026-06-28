@@ -49,9 +49,9 @@ graph TD
     end
 
     subgraph "Level 2: Substation Zone Masters"
-        GW1[Node A: ESP32 Gateway<br/>(Zone 1 Master)]
-        GW2[Node B: ESP32 Gateway<br/>(Zone 2 Master)]
-        GWn[Node N: ESP32 Gateway<br/>(Expansion)]
+        GW1[Node A: ESP32 Gateway<br/> (Zone 1 Master)]
+        GW2[Node B: ESP32 Gateway<br/> (Zone 2 Master)]
+        GWn[Node N: ESP32 Gateway<br/> (Expansion)]
         
         OLED[Local OLED HMI]
         SD[MicroSD Backup]
