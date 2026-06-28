@@ -43,7 +43,7 @@ graph TD
         OLED[Local OLED HMI]
         SD[MicroSD Offline Backup]
         
-        GW -->|SPI 2| OLED
+        GW -->|I2C| OLED
         GW -->|HSPI| SD
     end
 
@@ -58,5 +58,5 @@ graph TD
     LMP3 <==>|Wired CAN Bus 250kbps via HSPI| GW
     LMP4 <==>|Wired CAN Bus 250kbps via HSPI| GW
     
-    GW ==>|LoRa IN865 Radio| SenseCAP
+    GW ==>|LoRa IN865 Radio via FSPI| SenseCAP
     SenseCAP ==>|Local Wi-Fi UDP| Python
