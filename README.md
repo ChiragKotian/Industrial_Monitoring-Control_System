@@ -43,26 +43,26 @@ AgnostiLink is designed to scale spatially across massive industrial campuses wi
 ```mermaid
 graph TD
     subgraph "Level 1: Field Edge (100m Wire Radius)"
-        LMP1[LMP 14<br/>Group 1: IR Temp]
-        LMP2[LMP 22<br/>Group 2: IR Temp + Hum]
-        LMP3[LMP 101<br/>Group 4: Actuator]
+        LMP1["LMP 14<br/>Group 1: IR Temp"]
+        LMP2["LMP 22<br/>Group 2: IR Temp + Hum"]
+        LMP3["LMP 101<br/>Group 4: Actuator"]
     end
 
     subgraph "Level 2: Substation Zone Masters"
-        GW1[Node A: ESP32 Gateway<br/> (Zone 1 Master)]
-        GW2[Node B: ESP32 Gateway<br/> (Zone 2 Master)]
-        GWn[Node N: ESP32 Gateway<br/> (Expansion)]
+        GW1["Node A: ESP32 Gateway<br/>(Zone 1 Master)"]
+        GW2["Node B: ESP32 Gateway<br/>(Zone 2 Master)"]
+        GWn["Node N: ESP32 Gateway<br/>(Expansion)"]
         
-        OLED[Local OLED HMI]
-        SD[MicroSD Backup]
+        OLED["Local OLED HMI"]
+        SD["MicroSD Backup"]
         
         GW1 -->|I2C| OLED
         GW1 -->|HSPI| SD
     end
 
     subgraph "Level 3: IT Data Center (Air-Gapped)"
-        SenseCAP[Single SenseCAP M2<br/>LoRaWAN Gateway]
-        Python[Central Python Server<br/>UDP Port 1700]
+        SenseCAP["Single SenseCAP M2<br/>LoRaWAN Gateway"]
+        Python["Central Python Server<br/>UDP Port 1700"]
     end
 
     %% Connections
