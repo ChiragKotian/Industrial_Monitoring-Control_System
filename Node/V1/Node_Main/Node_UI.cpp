@@ -15,7 +15,8 @@
 enum HmiEventType { EVENT_BUTTON_CLICK };
 struct HmiEvent { HmiEventType type; uint8_t buttonId; };
 
-SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+// SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+SSD1306Wire NodeUI::display(0x3d, 500000, EXT_OLED_SDA, EXT_OLED_SCL, GEOMETRY_128_64, EXT_OLED_RST);
 MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
 
 static uint8_t selectedLmpId = 0; 
@@ -75,11 +76,15 @@ void NodeUI::init() {
     if (xHmiQueue == NULL) return;
 
     pinMode(Vext, OUTPUT);
-    digitalWrite(Vext, LOW); 
-    delay(100);            
+    digitalWrite(Vext, HIGH); // Cut power
+    delay(200);               // Let capacitors drain completely
+    digitalWrite(Vext, LOW);  // Restore power
+    
+    // ⏱️ Wait 250ms for the 3.3V rail to completely stabilize
+    delay(250);           
 
     display.init();
-    display.flipScreenVertically();
+    // display.flipScreenVertically();
     display.setFont(ArialMT_Plain_10);
     
     uint8_t buttonPins[] = {BTN_ENTER, BTN_BACK, BTN_UP, BTN_DOWN, BTN_HOME}; 

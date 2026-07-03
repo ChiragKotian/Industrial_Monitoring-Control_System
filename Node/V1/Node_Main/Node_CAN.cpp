@@ -13,6 +13,10 @@
 #define CMD_GET_POLL        0x0A
 #define MAX_RETRIES_ALLOWED 3
 
+// 🔒 Shared SPI Globals
+extern SemaphoreHandle_t hSpiMutex; 
+extern SPIClass hspiShared;
+
 // Staging footprint structure for fragmented multi-frame assembly 
 struct LMPAssemblyBuffer {
     uint8_t  rawPayload[32];       
@@ -29,25 +33,54 @@ uint16_t NodeCAN::lmpPollRates[MAX_NODE_ID + 1];
 uint32_t NodeCAN::discoveryStartTime = 0; 
 uint8_t NodeCAN::activeDiagnosticNode = 0; // 🎯 Tracks UI focus state
 
-SPIClass NodeCAN::hspiCAN(HSPI); 
-MCP2515 NodeCAN::mcp2515(CAN_CS, 10000000, &hspiCAN);
+MCP2515 NodeCAN::mcp2515(CAN_CS, 4000000, &hspiShared); // Initialized with shared bus at 4MHz
 NetworkState NodeCAN::currentBusState = STATE_STANDBY;
+
+// ---------------------------------------------------------
+// 🔄 SPI ARBITRATION: Switch bus to CAN (Full Re-Init)
+// ---------------------------------------------------------
+bool NodeCAN::switchToCAN() {
+    digitalWrite(SD_CS, HIGH); // Force SD to sleep first
+    hspiShared.end();
+    delayMicroseconds(50);
+    hspiShared.begin(SHARED_SCK, CAN_MISO, SHARED_MOSI, CAN_CS);
+
+    // mcp2515.reset();
+    bool ok = (mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ) == MCP2515::ERROR_OK);
+    if (ok) mcp2515.setNormalMode();
+    return ok;
+}
+
+// ---------------------------------------------------------
+// 🧹 OVERFLOW PROTECTION: Drain CAN RX Buffer
+// ---------------------------------------------------------
+void NodeCAN::drainCanRx() {
+    struct can_frame rxFrame;
+    while (mcp2515.readMessage(&rxFrame) == MCP2515::ERROR_OK) {
+        // If packets built up while SD was writing, we catch them here.
+        parseIncomingFrame(rxFrame);
+    }
+    uint8_t err = mcp2515.getErrorFlags();
+    if (err & 0xC0) { // RX0OVR (bit6) | RX1OVR (bit7)
+        Serial.print(F("🚨 [CAN Engine] Hardware Buffer Overflow! Clearing... "));
+        mcp2515.clearRXnOVRFlags();
+        mcp2515.clearMERR();
+    }
+}
 
 void NodeCAN::init() {
     for(int i = 0; i <= MAX_NODE_ID; i++) lmpPollRates[i] = 4000;
 
-    hspiCAN.begin(CAN_SCK, CAN_MISO, CAN_MOSI, CAN_CS);
-    mcp2515.reset();
-    mcp2515.setBitrate(CAN_250KBPS, MCP_8MHZ); 
-    mcp2515.setNormalMode();
+    // We do NOT call hspiShared.begin() here because setup() manages the first mounts.
     currentBusState = STATE_STANDBY;
-    Serial.println(F("[CAN Engine] MCP2515 Hardware Online (250KBPS). Normal Mode Locked."));
+    Serial.println(F("[CAN Engine] Memory Allocated. Waiting for Network Worker to start."));
 }
 
 void NodeCAN::startDiscoveryCycle() {
     currentBusState = STATE_INIT_DISCOVERY;
 }
 
+// ⚠️ INTERNAL HELPER: Assumes Mutex is already held by the calling function!
 void NodeCAN::sendCommand(uint8_t targetId, uint8_t instructionId, uint8_t* payload, uint8_t dlc) {
     struct can_frame txFrame;
     txFrame.can_id = 0x000;          
@@ -67,13 +100,28 @@ void NodeCAN::broadcastEndCycle() {
 }
 
 void NodeCAN::requestFreshDiagnostics(uint8_t targetLmpId) {
-    sendCommand(targetLmpId, CMD_REQ_DIAG, NULL, 0);
-    Serial.print(F("[CAN Engine] Force-Polled Diagnostic Byte from Node ID: "));
-    Serial.println(targetLmpId);
+    // We must grab the Mutex for asynchronous commands like this
+    if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(500))) {
+        if (switchToCAN()) {
+            digitalWrite(CAN_CS, LOW);
+            sendCommand(targetLmpId, CMD_REQ_DIAG, NULL, 0);
+            digitalWrite(CAN_CS, HIGH);
+        }
+        xSemaphoreGive(hSpiMutex);
+        Serial.print(F("[CAN Engine] Force-Polled Diagnostic Byte from Node ID: "));
+        Serial.println(targetLmpId);
+    }
 }
 
 void NodeCAN::requestPollRate(uint8_t targetLmpId) {
-    sendCommand(targetLmpId, CMD_GET_POLL, NULL, 0);
+    if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(500))) {
+        if (switchToCAN()) {
+            digitalWrite(CAN_CS, LOW);
+            sendCommand(targetLmpId, CMD_GET_POLL, NULL, 0);
+            digitalWrite(CAN_CS, HIGH);
+        }
+        xSemaphoreGive(hSpiMutex);
+    }
 }
 
 void NodeCAN::setPollRate(uint8_t targetLmpId, uint16_t intervalMs) {
@@ -81,11 +129,20 @@ void NodeCAN::setPollRate(uint8_t targetLmpId, uint16_t intervalMs) {
     uint16_t q_rate = intervalMs / 100;
     payload[0] = (q_rate >> 8) & 0xFF;
     payload[1] = q_rate & 0xFF;
-    sendCommand(targetLmpId, CMD_SET_POLL, payload, 2);
+    
+    if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(500))) {
+        if (switchToCAN()) {
+            digitalWrite(CAN_CS, LOW);
+            sendCommand(targetLmpId, CMD_SET_POLL, payload, 2);
+            digitalWrite(CAN_CS, HIGH);
+        }
+        xSemaphoreGive(hSpiMutex);
+    }
 }
 
 void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
     uint32_t rawId = frame.can_id; 
+    Serial.println(frame.data[1]);
     
     if (rawId < 1 || rawId > MAX_NODE_ID) return;
     if (frame.can_dlc < 3) return; 
@@ -153,15 +210,13 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
 
                 // 🕒 GENERATE THE INDUSTRIAL CSV TIMESTAMP
                 struct tm timeinfo;
-                String timeStamp = String(millis()); // Fallback to millis if time not set
+                String timeStamp = String(millis()); 
                 if(getLocalTime(&timeinfo, 10)) {
                     char dtBuff[25];
-                    // Formats as: YYYY-MM-DD HH:MM:SS
                     strftime(dtBuff, sizeof(dtBuff), "%Y-%m-%d %H:%M:%S", &timeinfo);
                     timeStamp = String(dtBuff);
                 }
 
-                // Append the real timestamp to the CSV row!
                 String logLine = timeStamp + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
                 switch (nodeInfo.groupType) {
                     case 1: { 
@@ -174,7 +229,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, 0.0f);
                             logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
-                            // Shoot the exact same CSV data string into the air!
                             NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
@@ -192,7 +246,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, 0.0f, ambientTemp, humidity);
                             logLine += "OBJ1:" + String(objectTemp1, 1) + ";AMB:" + String(ambientTemp, 1) + ";RH:" + String(humidity, 1) + "%\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
-                            // Shoot the exact same CSV data string into the air!
                             NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
@@ -210,7 +263,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, objectTemp1, objectTemp2, ambientTemp, 0.0f);
                             logLine += "PHASE_A:" + String(objectTemp1, 1) + ";PHASE_B:" + String(objectTemp2, 1) + ";SHARED_AMB:" + String(ambientTemp, 1) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
-                            // Shoot the exact same CSV data string into the air!
                             NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
@@ -222,7 +274,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                             NodeRegistry::updateTelemetry(rawId, 0.0f, 0.0f, 0.0f, 0.0f); 
                             logLine += "ACTUATOR_MASK:0x" + String(switchStatusMask, HEX) + "\n";
                             if (NodeStorage::isSystemReady) NodeStorage::logStringPacket(logLine);
-                            // Shoot the exact same CSV data string into the air!
                             NodeLoRa::transmitTelemetry(logLine);
                         }
                         break;
@@ -246,7 +297,6 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
             uint16_t fetchedRate = (frame.data[2] << 8 | frame.data[3]) * 100;
             lmpPollRates[rawId] = fetchedRate;
             
-            // Instantly notify the UI to refresh its screen if it's currently on the settings page!
             NodeUI::updateLivePollRate(rawId, fetchedRate);
             
             Serial.print(F("[CAN Config] LMP ")); Serial.print(rawId);
@@ -257,77 +307,96 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
     } 
 }
 
+// ---------------------------------------------------------
+// 🧠 MAIN FREE-RTOS NETWORK WORKER TASK
+// ---------------------------------------------------------
 void NodeCAN::runNetworkWorker(void* pvParameters) {
-    struct can_frame incomingFrame;
     uint32_t recheckStartTime = 0;
     static uint8_t discoveryPulseCount = 0;
 
     for (;;) { 
-        switch (currentBusState) {
-            case STATE_STANDBY:
-                break;
+        // 2. Drain all waiting messages from the MCP2515 hardware buffer
+                drainCanRx();
+        // 🛑 GRAB THE SPI MUTEX FOR THE ENTIRE CYCLE
+        // This ensures CAN has uninterrupted access to the hardware for both State logic and RX draining.
+        if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(500))) {
+            
+            // 🔄 Safely hop the physical pins to the CAN transceiver
+            if (switchToCAN()) {
+                digitalWrite(CAN_CS, LOW); // Wake CAN hardware
                 
-            case STATE_INIT_DISCOVERY:
-                discoveryPulseCount = 0;
-                discoveryStartTime = millis(); 
-                Serial.println(F("[CAN Engine] Phase 1/4: Flooding bus with network discovery requests..."));
-                while (discoveryPulseCount < 3) {
-                    sendCommand(0x00, 0x01, NULL, 0);
-                    discoveryPulseCount++;
-                    vTaskDelay(pdMS_TO_TICKS(100)); 
+                // 1. Process State Machine Logic
+                switch (currentBusState) {
+                    case STATE_STANDBY:
+                        break;
+                        
+                    case STATE_INIT_DISCOVERY:
+                        discoveryPulseCount = 0;
+                        discoveryStartTime = millis(); 
+                        Serial.println(F("[CAN Engine] Phase 1/4: Flooding bus with network discovery requests..."));
+                        while (discoveryPulseCount < 3) {
+                            sendCommand(0x00, 0x01, NULL, 0);
+                            discoveryPulseCount++;
+                            vTaskDelay(pdMS_TO_TICKS(100)); // We yield inside the while loop to prevent watchdog panics
+                        }
+                        currentBusState = STATE_COLLECTING_REPLIES;
+                        break;
+                        
+                    case STATE_COLLECTING_REPLIES:
+                        if (millis() - discoveryStartTime >= DISCOVERY_WINDOW) {
+                            Serial.println(F("[CAN Engine] Phase 2/4 Closed. Shifting to Sequential Ack Validation."));
+                            currentBusState = STATE_SEND_ACK_SEQUENTIAL;
+                        }
+                        break;
+                        
+                    case STATE_SEND_ACK_SEQUENTIAL: {
+                        uint8_t activeNodes[MAX_NODE_ID];
+                        uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
+                        
+                        Serial.print(F("[CAN Engine] Phase 3/4: Issuing unicast confirmations to ")); 
+                        Serial.print(totalFound); Serial.println(F(" nodes..."));
+                        
+                        for (int i = 0; i < totalFound; i++) {
+                            sendCommand(activeNodes[i], 0x01, NULL, 0); 
+                            vTaskDelay(pdMS_TO_TICKS(15)); 
+                        }
+                        
+                        broadcastEndCycle(); 
+                        recheckStartTime = millis();
+                        currentBusState = STATE_RECHECK_WINDOW;
+                        break;
+                    }
+                        
+                    case STATE_RECHECK_WINDOW:
+                        if (millis() - recheckStartTime >= 3000) {
+                            Serial.println(F("[CAN Engine] Phase 4/4 Complete: Topology verified stable. Locking Operational Listening."));
+                            NodeRegistry::finalizeDiscoveryRegistry();
+                            currentBusState = STATE_OPERATIONAL_MODE;
+                        }
+                        break;
+                        
+                    case STATE_OPERATIONAL_MODE: {
+                        static uint32_t lastFocusedPollTime = 0;
+                        if (activeDiagnosticNode > 0 && (millis() - lastFocusedPollTime >= 2000)) {
+                            lastFocusedPollTime = millis();
+                            sendCommand(activeDiagnosticNode, CMD_REQ_DIAG, NULL, 0); 
+                        }
+                        break;
+                    }
                 }
-                currentBusState = STATE_COLLECTING_REPLIES;
-                break;
-                
-            case STATE_COLLECTING_REPLIES:
-                if (millis() - discoveryStartTime >= DISCOVERY_WINDOW) {
-                    Serial.println(F("[CAN Engine] Phase 2/4 Closed. Shifting to Sequential Ack Validation."));
-                    currentBusState = STATE_SEND_ACK_SEQUENTIAL;
-                }
-                break;
-                
-            case STATE_SEND_ACK_SEQUENTIAL: {
-                uint8_t activeNodes[MAX_NODE_ID];
-                uint8_t totalFound = NodeRegistry::getActiveNodesList(activeNodes);
-                
-                Serial.print(F("[CAN Engine] Phase 3/4: Issuing unicast confirmations to ")); 
-                Serial.print(totalFound); Serial.println(F(" nodes..."));
-                
-                for (int i = 0; i < totalFound; i++) {
-                    sendCommand(activeNodes[i], 0x01, NULL, 0); 
-                    vTaskDelay(pdMS_TO_TICKS(15)); 
-                }
-                
-                broadcastEndCycle(); 
-                recheckStartTime = millis();
-                currentBusState = STATE_RECHECK_WINDOW;
-                break;
-            }
-                
-            case STATE_RECHECK_WINDOW:
-                if (millis() - recheckStartTime >= 3000) {
-                    Serial.println(F("[CAN Engine] Phase 4/4 Complete: Topology verified stable. Locking Operational Listening."));
-                    NodeRegistry::finalizeDiscoveryRegistry();
-                    currentBusState = STATE_OPERATIONAL_MODE;
-                }
-                break;
-                
-            case STATE_OPERATIONAL_MODE: {
-                // 🎯 CONTEXT-AWARE POLLING
-                // Only fire 0x06 diagnostic polls if the UI actively designates a target
-                static uint32_t lastFocusedPollTime = 0;
-                
-                if (activeDiagnosticNode > 0 && (millis() - lastFocusedPollTime >= 2000)) {
-                    lastFocusedPollTime = millis();
-                    sendCommand(activeDiagnosticNode, CMD_REQ_DIAG, NULL, 0); 
-                }
-                break;
-            }
-        }
 
-        if (mcp2515.readMessage(&incomingFrame) == MCP2515::ERROR_OK) {
-            parseIncomingFrame(incomingFrame);
+                
+                
+                digitalWrite(CAN_CS, HIGH); // Sleep CAN hardware
+            } else {
+                Serial.println(F("🚨 [CAN Engine] Hardware Resync Failed. Check Wiring."));
+            }
+            
+            // 🟢 Release the SPI bus so the Storage Task can flush its batch if needed
+            xSemaphoreGive(hSpiMutex); 
         }
-        vTaskDelay(pdMS_TO_TICKS(2)); 
+        
+        // Yield heavily to allow other tasks (like UI and LoRa) to process
+        vTaskDelay(pdMS_TO_TICKS(20)); 
     }
 }

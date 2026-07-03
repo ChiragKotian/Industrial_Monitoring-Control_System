@@ -9,8 +9,12 @@ TaskHandle_t hStorageTask = NULL;
 TaskHandle_t hCanTask      = NULL;
 TaskHandle_t hUiTask       = NULL;
 
+SemaphoreHandle_t hSpiMutex = NULL;
+SPIClass hspiShared(HSPI);
+
 void setup() {
     Serial.begin(115200);
+    hSpiMutex = xSemaphoreCreateMutex();
     delay(1000); 
 
     Serial.println(F("\n=================================================="));
@@ -40,6 +44,10 @@ void setup() {
     xTaskCreatePinnedToCore(NodeLoRa::runLoRaWorker, "LoRa_Task", 4096, NULL, 1, NULL, 1);
 
     Serial.println(F("[SYSTEM] Peripherals Online. Triggering Network Discovery..."));
+
+    // ⏱️ Hold the system state in "Splash Screen" mode for 2000ms
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
     NodeCAN::startDiscoveryCycle();
     vTaskDelete(NULL); 
 }

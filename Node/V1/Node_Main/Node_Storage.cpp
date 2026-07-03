@@ -1,73 +1,100 @@
 #include "Node_Storage.h"
+#include <SPI.h>
+
+extern SemaphoreHandle_t hSpiMutex;
+extern SPIClass hspiShared;
 
 bool NodeStorage::sdAvailable = false;
 bool NodeStorage::isSystemReady = false;
 QueueHandle_t NodeStorage::xStorageQueueHandle = NULL;
 
+// ---------------------------------------------------------
+// Switch bus to SD card: full re-init, not just pin remap.
+// ---------------------------------------------------------
+bool NodeStorage::switchToSD() {
+    digitalWrite(CAN_CS, HIGH); // deselect CAN first
+    hspiShared.end();
+    delayMicroseconds(50);
+    hspiShared.begin(SHARED_SCK, SD_MISO, SHARED_MOSI, SD_CS);
+
+    // CRITICAL: Force a real remount every time by ending it first.
+    SD.end();
+    bool ok = SD.begin(SD_CS, hspiShared, 4000000);
+    return ok;
+}
+
 void NodeStorage::init() {
     xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
-    configASSERT(xStorageQueueHandle != NULL); 
+    configASSERT(xStorageQueueHandle != NULL);
     
-    SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-    if(SD.begin(SD_CS, SPI)) {
+    // Initial SD Mount with Retries (from your v2 code)
+    bool sdOk = switchToSD();
+    for (int i = 0; i < 3 && !sdOk; i++) {
+        delay(50);
+        sdOk = switchToSD();
+    }
+    
+    if(sdOk) {
         sdAvailable = true;
         Serial.println(F("[Storage Engine] SD Card Mounted."));
     } else {
         Serial.println(F("[Storage Engine] SD Warning: Card not detected."));
     }
     
-    isSystemReady = true; 
+    isSystemReady = true;
 }
 
 void NodeStorage::logStringPacket(const String& csvRow) {
-    // If card is out, drop packets instantly so the queue doesn't overflow
-    if (xStorageQueueHandle == NULL || !sdAvailable) return;
-
+    if (xStorageQueueHandle == NULL) return;
     StorageLogPacket packet;
     strncpy(packet.dataRow, csvRow.c_str(), sizeof(packet.dataRow) - 1);
-    packet.dataRow[sizeof(packet.dataRow) - 1] = '\0'; 
-
-    // Send to queue. If queue is full (0), drop the packet to save the CAN engine
+    packet.dataRow[sizeof(packet.dataRow) - 1] = '\0';
     xQueueSend(xStorageQueueHandle, &packet, 0);
 }
 
 void NodeStorage::runStorageWorker(void* pvParameters) {
-    StorageLogPacket bufferedPacket;
-    uint32_t lastRemountAttempt = 0;
-    
+    StorageLogPacket batchBuffer[STORAGE_BATCH_SIZE];
+    int count = 0;
+    TickType_t lastFlushTime = xTaskGetTickCount();
+
     for (;;) {
-        // Block until data arrives OR 1 second passes (pdMS_TO_TICKS(1000))
-        // This allows the task to wake up and check the SD status even if the queue is empty
-        if (xQueueReceive(xStorageQueueHandle, &bufferedPacket, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        StorageLogPacket packet;
+
+        // Block until data arrives OR 1 second passes
+        if (xQueueReceive(xStorageQueueHandle, &packet, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            batchBuffer[count++] = packet;
+        }
+
+        // Write batch if: Size reached OR 5-second timeout reached
+        if (count >= STORAGE_BATCH_SIZE || (count > 0 && (xTaskGetTickCount() - lastFlushTime > pdMS_TO_TICKS(STORAGE_TIMEOUT_MS)))) {
             
-            if (sdAvailable) {
-                File runtimeFile = SD.open("/telemetry.csv", FILE_APPEND);
-                if (runtimeFile) {
-                    runtimeFile.print(bufferedPacket.dataRow);
-                    runtimeFile.flush();
-                    runtimeFile.close();
+            // 🛑 TAKE THE SPI KEY
+            if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(1000))) {
+                
+                // 🔄 Execute full re-init switch
+                if (switchToSD()) {
+                    digitalWrite(SD_CS, LOW); // Wake SD
+                    
+                    File f = SD.open("/telemetry.csv", FILE_APPEND);
+                    if (f) {
+                        for(int i=0; i<count; i++) {
+                            f.print(batchBuffer[i].dataRow);
+                        }
+                        f.flush();
+                        f.close();
+                        sdAvailable = true; 
+                        count = 0; // Clear batch
+                        lastFlushTime = xTaskGetTickCount();
+                    } else {
+                        sdAvailable = false; 
+                    }
+                    
+                    digitalWrite(SD_CS, HIGH); // Sleep SD
                 } else {
-                    // 🚨 HOT-UNPLUG DETECTED
-                    // The file failed to open. The card was physically yanked out!
                     sdAvailable = false;
-                    Serial.println(F("🚨 [Storage Engine] SD Card Hot-Unplug Detected! Health -> ERR"));
                 }
-            }
-            vTaskDelay(pdMS_TO_TICKS(50)); // Tiny cooling window for SD Flash controller
-            
-        } else {
-            // 🔄 HOT-PLUG AUTO-RECOVERY
-            // The queue was empty for 1 second. If the SD card is currently disconnected,
-            // use this background idle time to try and remount it every 5 seconds.
-            if (!sdAvailable && (millis() - lastRemountAttempt > 5000)) {
-                lastRemountAttempt = millis();
                 
-                SD.end(); // Clear the broken SPI state memory
-                
-                if(SD.begin(SD_CS, SPI)) {
-                    sdAvailable = true;
-                    Serial.println(F("✅ [Storage Engine] SD Card Hot-Plugged and Remounted!"));
-                }
+                xSemaphoreGive(hSpiMutex); // RELEASE KEY
             }
         }
     }
