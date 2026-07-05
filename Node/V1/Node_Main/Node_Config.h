@@ -3,18 +3,21 @@
 
 #include <Arduino.h>
 
-// 🔌 Custom Hardware SPI Pin Allocation for CAN Module
-#define CAN_SCK     4
-#define CAN_MISO    5
-#define CAN_MOSI    6
-#define CAN_CS      7
+
+// 🔌 SHARED HARDWARE SPI BUS (CAN + SD Card)
+#define SHARED_SCK    4
+#define SHARED_MOSI   6
+
+// SEPARATE MISO PINS
+#define CAN_MISO      5
+#define SD_MISO       48
+
+#define CAN_CS        7
+#define SD_CS         26
 #define CAN_INT     2
 
-// 💾 Custom Physical Pins for SD Storage Module
-#define SD_MOSI     48
-#define SD_MISO     19
-#define SD_SCK      20
-#define SD_CS       26
+#define STORAGE_BATCH_SIZE 20  // Write to SD only after 20 packets
+#define STORAGE_TIMEOUT_MS 5000 // Or every 5 seconds, whichever comes first
 
 // 📊 Protocol & Registry Allocations
 #define MAX_NODE_ID       240
@@ -33,5 +36,10 @@
 #define PRIORITY_HMI      3   
 #define PRIORITY_SD       2   
 #define PRIORITY_LORA     1   
+
+// 📺 EXTERNAL I2C OLED PINS (Recycled from old SD SPI)
+#define EXT_OLED_SDA  19
+#define EXT_OLED_SCL  20
+#define EXT_OLED_RST  21 
 
 #endif

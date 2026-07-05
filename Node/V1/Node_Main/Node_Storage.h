@@ -4,22 +4,22 @@
 #include "Node_Config.h"
 #include <SD.h>
 
-
-extern QueueHandle_t xStorageQueueHandle;
 struct StorageLogPacket {
-    char dataRow[96];
+    char dataRow[64]; 
 };
 
 class NodeStorage {
 public:
-    static bool sdAvailable;
-    static QueueHandle_t xStorageQueueHandle;
-    static SemaphoreHandle_t xStorageMutex;
-    static bool isSystemReady;
-
     static void init();
-    static void logStringPacket(const String& csvRow); // Ensure this matches exactly
+    static void logStringPacket(const String& csvRow);
     static void runStorageWorker(void* pvParameters);
+    
+    static bool sdAvailable;
+    static bool isSystemReady;
+    static QueueHandle_t xStorageQueueHandle;
+
+private:
+    static bool switchToSD(); // 🔄 The Resync-on-Switch Helper
 };
 
 #endif
