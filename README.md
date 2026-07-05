@@ -123,6 +123,13 @@ The system is designed with a "Fail-Safe, Auto-Recover" philosophy:
 * **SD Card Hot-Unplug Protection:** If the MicroSD card is ejected while the system is live, the FreeRTOS Storage Engine instantly detects the missing hardware, suspends file I/O to prevent a fatal OS panic, alerts the OLED HMI, and continuously polls the SPI bus until a card is re-inserted and successfully remounted.
 * **Digital Circuit Breakers:** Code is wrapped in `configASSERT()` checkpoints to instantly catch memory leaks or stack overflows during long-term continuous operation.
 
+_Click the image below to watch node menu and LMP related features._
+<p align="center">
+  <a href="https://youtu.be/4uiYQzbxTEU">
+    <img src="https://img.youtube.com/vi/4uiYQzbxTEU/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  </a>
+</p>
+
 ### 🔀 4.5 Intelligent SPI Hardware Isolation
 The ESP32-S3 contains limited hardware SPI buses. To prevent peripheral collisions, AgnostiLink implements strict bus routing:
 * **Bus 1 (FSPI):** Pin-locked and strictly dedicated to the SX1262 LoRa Radio. This prevents the complex, time-sensitive RF modulation from ever being interrupted.
