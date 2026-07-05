@@ -44,7 +44,6 @@ AgnostiLink is designed to scale spatially across massive industrial campuses wi
 * **Substation Scalability:** A small switchyard may only require a single Node. However, a massive refinery substation can deploy multiple independent Nodes (e.g., Node A for the North Transformer Bank, Node B for the South Motor Control Center), with each Node managing its own localized 100m CAN network.
 * **The Wireless Funnel:** Regardless of whether a facility has 1 Node or 50 Nodes, **all of them broadcast wirelessly to a single, centralized LoRaWAN Gateway** (SenseCAP M2). This completely eliminates the need to run kilometers of fiber-optic cable back to the main server room.
 
-<img width="1407" height="1001" alt="loraCatcher" src="https://github.com/user-attachments/assets/992b95f7-d767-4fa1-bee3-279866fc302a" />
 <img width="2479" height="2309" alt="one node connected" src="https://github.com/user-attachments/assets/8abd4de7-f74c-4e3b-8f7e-fbe7e701a832" />
 
 
