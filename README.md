@@ -103,7 +103,7 @@ The system requires zero firmware modifications when the facility expands. It ut
 3. **Sequential ACK:** The gateway verifies stable bidirectional links and locks the roster.
 4. **Type-Group Addressing:** The Gateway automatically knows how to parse data based on the Group ID (e.g., Group 1 = IR Temp, Group 2 = IR Temp + Humidity). To expand the substation network, a technician simply wires a new LMP to the CAN bus—the Gateway will automatically discover it, register its sensor profile, and begin logging its data.
 
-_Click the image below to watch a full hardware demonstration of the AgnostiLink Substation Gateway detecting sensors and broadcasting AES-128 encrypted payloads over LoRa._
+_Click the image below to watch multi-LMP detection on CAN bus._
 <p align="center">
   <a href="https://youtube.com/shorts/Hb-BoFzUOH0?feature=share">
     <img src="https://img.youtube.com/vi/Hb-BoFzUOH0/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
