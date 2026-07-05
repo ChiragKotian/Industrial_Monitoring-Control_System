@@ -6,6 +6,8 @@
 ![Protocol: CAN & LoRa](https://img.shields.io/badge/Protocol-CAN%20Bus%20%7C%20LoRaWAN-orange)
 ![Environment: FreeRTOS](https://img.shields.io/badge/Environment-FreeRTOS-yellow)
 
+
+
 ### 🌿 Repository Branching Strategy
 To maintain industrial reliability while allowing for continuous R&D, this repository operates on a strict two-branch system:
 * **`main` (Stable):** The production-ready branch. Contains the battle-tested, core features (FreeRTOS multi-threading, AL-CAN discovery and communication, SD card data loging, UI, LoRa). Highly stable, but limited to foundational features.
@@ -123,10 +125,17 @@ The system is designed with a "Fail-Safe, Auto-Recover" philosophy:
 * **SD Card Hot-Unplug Protection:** If the MicroSD card is ejected while the system is live, the FreeRTOS Storage Engine instantly detects the missing hardware, suspends file I/O to prevent a fatal OS panic, alerts the OLED HMI, and continuously polls the SPI bus until a card is re-inserted and successfully remounted.
 * **Digital Circuit Breakers:** Code is wrapped in `configASSERT()` checkpoints to instantly catch memory leaks or stack overflows during long-term continuous operation.
 
-_Click the image below to watch node menu and LMP related features._
+_Click the image below to watch node ui and LMP related features._
 <p align="center">
   <a href="https://youtu.be/4uiYQzbxTEU">
     <img src="https://img.youtube.com/vi/4uiYQzbxTEU/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  </a>
+</p>
+
+_Click the image below to watch SD card data logging and power failure condition demo._
+<p align="center">
+  <a href="https://youtu.be/pnavDYE1k5Y">
+    <img src="https://img.youtube.com/vi/pnavDYE1k5Y/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
   </a>
 </p>
 
@@ -140,6 +149,13 @@ The system is not just a passive listener; it is a full command-and-control suit
 * **Substation UI:** A built-in 128x64 OLED display utilizing a lag-free, double-buffered rendering engine. It features a 5-button tactile interface (Up, Down, Enter, Back, Home) driven by a strict State Machine.
 * **Global Emergency Overrides:** No matter how deep a user navigates into the settings menu to adjust polling intervals, if a critical Level-2 temperature spike occurs on the CAN bus, the UI immediately hijacks the screen to flash a localized Danger Tag.
 * **Actuator Downlink:** The network architecture reserves specific Node IDs (161–240) for Actuators. The central IT server can dispatch AES-encrypted command payloads back down the LoRa pipeline. The Gateway decrypts these, translates them into `CMD_ACTUATE` CAN Opcodes, and directs specific LMPs to toggle their onboard relay control circuits—completing the loop from cloud dashboard to physical edge device.
+
+_Click the image below to watch node menu demo._
+<p align="center">
+  <a href="https://youtu.be/WNw_T1Kaeaw">
+    <img src="https://img.youtube.com/vi/WNw_T1Kaeaw/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  </a>
+</p>
 
 ## 🖧 5. The AgnostiLink CAN Protocol (AL-CAN)
 
@@ -324,6 +340,13 @@ The Arduino Nano lacks the RAM to run FreeRTOS. Instead, `lmp_code.ino` utilizes
 * **Zero `delay()` Tolerance:** The code never uses blocking delays. The processor rapidly cycles, continuously polling the MCP2515 CAN controller. This ensures that incoming opcodes (like the `0x09` Emergency Stop or `0x07` Set Poll Rate) are serviced instantaneously.
 * **Dynamic Background Timers:** Sensor polling and CAN transmissions operate on independent timers (`telemetryInterval`). An operator can send a CAN command to change this interval from 4000ms to 1000ms on the fly, and the Nano will seamlessly adjust its telemetry output rate without dropping a single CAN frame.
 
+_Click the image below to watch control of LMP via node i.e. dynamic polling._
+<p align="center">
+  <a href="https://youtube.com/shorts/yrK1gpTWegw?feature=share">
+    <img src="https://img.youtube.com/vi/yrK1gpTWegw/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  </a>
+</p>
+
 ### 🛡️ 7.2 Hardware Watchdogs & "Self-Healing" Logic
 Industrial sensors placed on vibrating motors or high-voltage transformers are prone to physical wire degradation. The LMP firmware is designed to survive catastrophic hardware failures automatically.
 
@@ -448,6 +471,13 @@ Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating
 5. Verify that Windows Defender/Firewall allows traffic on Port `1700`.
 
 ---
+
+_Click the image below to watch complete system demo._
+<p align="center">
+  <a href="https://youtu.be/bIS276E0zqE">
+    <img src="https://img.youtube.com/vi/bIS276E0zqE/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  </a>
+</p>
 
 ## 💰 11. Cost Engineering: Test-Bed Validation Under ₹25,000
 
