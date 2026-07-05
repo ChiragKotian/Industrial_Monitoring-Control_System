@@ -280,7 +280,7 @@ void NodeUI::drawSysHealthPage() {
     display.drawString(64, 26, "SD: " + String(NodeStorage::sdAvailable ? "OK" : "ERR"));
     
     display.drawString(0, 38, "CAN:  OK");
-    display.drawString(64, 38, "LoRa: STBY");
+    display.drawString(64, 26, "LoRa: " + String(NodeLoRa::isSystemHealthy ? "OK" : "ERR"));
     
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.drawString(64, 52, liveDate + "  " + liveTime); // E.g., "15/08/2026  14:30:00"

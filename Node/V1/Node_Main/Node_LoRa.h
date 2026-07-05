@@ -9,6 +9,7 @@ public:
     static void init();
     static void transmitTelemetry(String payload);
     static void runLoRaWorker(void* pvParameters);
+    static bool isSystemHealthy;
 };
 
 #endif

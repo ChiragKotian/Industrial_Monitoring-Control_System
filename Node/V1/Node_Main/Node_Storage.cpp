@@ -24,7 +24,8 @@ bool NodeStorage::switchToSD() {
 }
 
 void NodeStorage::init() {
-    xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
+    // xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
+    xStorageQueueHandle = xQueueCreate(50, 64);
     configASSERT(xStorageQueueHandle != NULL);
     
     // Initial SD Mount with Retries (from your v2 code)
@@ -45,47 +46,55 @@ void NodeStorage::init() {
 }
 
 void NodeStorage::logStringPacket(const String& csvRow) {
+    // if (xStorageQueueHandle == NULL) return;
+    // StorageLogPacket packet;
+    // strncpy(packet.dataRow, csvRow.c_str(), sizeof(packet.dataRow) - 1);
+    // packet.dataRow[sizeof(packet.dataRow) - 1] = '\0';
+    // xQueueSend(xStorageQueueHandle, &packet, 0);
     if (xStorageQueueHandle == NULL) return;
-    StorageLogPacket packet;
-    strncpy(packet.dataRow, csvRow.c_str(), sizeof(packet.dataRow) - 1);
-    packet.dataRow[sizeof(packet.dataRow) - 1] = '\0';
-    xQueueSend(xStorageQueueHandle, &packet, 0);
+    
+    char buffer[64] = {0}; // Initialize empty buffer
+    strncpy(buffer, csvRow.c_str(), sizeof(buffer) - 1);
+    
+    // Send the actual BUFFER memory into the queue. 
+    // FreeRTOS will copy all 64 bytes into its own safe storage.
+    xQueueSend(xStorageQueueHandle, &buffer, 0);
 }
 
 void NodeStorage::runStorageWorker(void* pvParameters) {
-    StorageLogPacket batchBuffer[STORAGE_BATCH_SIZE];
+    // Array of 64-byte strings to hold the batch
+    char batchBuffer[STORAGE_BATCH_SIZE][64]; 
     int count = 0;
     TickType_t lastFlushTime = xTaskGetTickCount();
 
     for (;;) {
-        StorageLogPacket packet;
+        char incomingPacket[64];
 
-        // Block until data arrives OR 1 second passes
-        if (xQueueReceive(xStorageQueueHandle, &packet, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            batchBuffer[count++] = packet;
+        // Receive the 64 bytes from the queue directly into our local string
+        if (xQueueReceive(xStorageQueueHandle, &incomingPacket, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            strncpy(batchBuffer[count], incomingPacket, 64);
+            count++;
         }
 
-        // Write batch if: Size reached OR 5-second timeout reached
+        // ... Wait for batch full ...
+        
         if (count >= STORAGE_BATCH_SIZE || (count > 0 && (xTaskGetTickCount() - lastFlushTime > pdMS_TO_TICKS(STORAGE_TIMEOUT_MS)))) {
-            
-            // 🛑 TAKE THE SPI KEY
             if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(1000))) {
-                
-                // 🔄 Execute full re-init switch
                 if (switchToSD()) {
-                    digitalWrite(SD_CS, LOW); // Wake SD
-                    
+                    digitalWrite(SD_CS, LOW); 
                     File f = SD.open("/telemetry.csv", FILE_APPEND);
                     if (f) {
                         for(int i=0; i<count; i++) {
-                            f.print(batchBuffer[i].dataRow);
+                            // Print the raw string
+                            f.print(batchBuffer[i]);
                         }
                         f.flush();
                         f.close();
                         sdAvailable = true; 
-                        count = 0; // Clear batch
+                        count = 0; 
                         lastFlushTime = xTaskGetTickCount();
-                    } else {
+                    } 
+                    else {
                         sdAvailable = false; 
                     }
                     
