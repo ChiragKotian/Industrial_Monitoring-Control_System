@@ -36,12 +36,17 @@ The system relies on a **two-tier communication architecture**:
 
 ## 🏗️ 3. System Architecture & Physical Topology
 
+
 AgnostiLink is designed to scale spatially across massive industrial campuses without requiring complex IT infrastructure or Wi-Fi mesh networks. The deployment topology is divided into three distinct physical layers:
 
 ### 📍 3.1 The Deployment Strategy
 * **The 100-Meter CAN Cell:** The physical CAN bus is highly robust but distance-constrained by electrical resistance. Therefore, **one Master Node (ESP32 Gateway)** is deployed to act as the localized hub for multiple equipment LMPs clustered within a maximum **100-meter radius**. 
 * **Substation Scalability:** A small switchyard may only require a single Node. However, a massive refinery substation can deploy multiple independent Nodes (e.g., Node A for the North Transformer Bank, Node B for the South Motor Control Center), with each Node managing its own localized 100m CAN network.
 * **The Wireless Funnel:** Regardless of whether a facility has 1 Node or 50 Nodes, **all of them broadcast wirelessly to a single, centralized LoRaWAN Gateway** (SenseCAP M2). This completely eliminates the need to run kilometers of fiber-optic cable back to the main server room.
+
+<img width="1407" height="1001" alt="loraCatcher" src="https://github.com/user-attachments/assets/992b95f7-d767-4fa1-bee3-279866fc302a" />
+<img width="2479" height="2309" alt="one node connected" src="https://github.com/user-attachments/assets/8abd4de7-f74c-4e3b-8f7e-fbe7e701a832" />
+
 
 ### 🗺️ 3.2 Network Flow Diagram
 
@@ -358,6 +363,11 @@ The physical hardware and firmware layers of AgnostiLink are currently **100% op
 * [x] Configured a SenseCAP M2 Gateway to bypass cloud whitelists and directly forward local UDP packets.
 * [x] Wrote a centralized Python listener (`lora_listener.py`) to catch UDP packets, strip network headers, decode Base64, decrypt the AES-128 payload using `pycryptodome`, and extract clean industrial CSV data strings.
 
+<img width="1407" height="1001" alt="loraCatcher" src="https://github.com/user-attachments/assets/0f82f327-4f7a-4358-b2e3-530bb69d039a" />
+
+<img width="3980" height="1567" alt="loraComm" src="https://github.com/user-attachments/assets/bde74036-ba31-4666-aaeb-016c863c4f3e" />
+
+
 ---
 
 ## 🚀 9. Future Expansions & Commercial Integrations (The Hackathon Roadmap)
@@ -399,6 +409,10 @@ Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating
 * Transceivers: MCP2515 + TJA1050 CAN Modules
 * Gateway: SenseCAP M2 LoRaWAN Gateway (or similar UDP Packet Forwarder)
 * Sensors: MLX90614 (IR), AHT21B (Humidity/Temp)
+  
+<img width="1246" height="614" alt="heltec2" src="https://github.com/user-attachments/assets/a9976935-4019-4ca9-bf4e-a0189700b4b9" />
+<img width="1805" height="936" alt="heltec" src="https://github.com/user-attachments/assets/aa7b5f40-6092-44ed-846f-d4b8c9045cec" />
+
 
 **Firmware Dependencies (Install via Arduino Library Manager):**
 * `FreeRTOS` (Native to ESP32 Arduino Core)
