@@ -8,7 +8,7 @@
 
 ### 🌿 Repository Branching Strategy
 To maintain industrial reliability while allowing for continuous R&D, this repository operates on a strict two-branch system:
-* **`main` (Stable):** The production-ready branch. Contains the battle-tested, core features (FreeRTOS multi-threading, AL-CAN discovery, AES-128 LoRa transmission, and SD card batching). Highly stable, but limited to foundational features.
+* **`main` (Stable):** The production-ready branch. Contains the battle-tested, core features (FreeRTOS multi-threading, AL-CAN discovery and communication, SD card data loging, UI, LoRa). Highly stable, but limited to foundational features.
 * **`work-in-progress` (Experimental):** The active development branch. Contains the absolute latest features, UI overhauls, and experimental sensor profiles. *Note: Code on this branch is subject to rapid changes and may contain bugs, memory leaks, or stability issues.*
 
 ---
