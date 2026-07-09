@@ -4,8 +4,10 @@
 #include "Node_Config.h"
 #include <SD.h>
 
+#define MAX_LOG_LENGTH 128
+
 struct StorageLogPacket {
-    char dataRow[64]; 
+    char dataRow[MAX_LOG_LENGTH]; 
 };
 
 class NodeStorage {
