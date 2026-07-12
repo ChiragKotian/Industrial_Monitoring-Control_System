@@ -2,6 +2,7 @@
 #include "Node_Registry.h"
 #include "Node_Storage.h"
 #include "Node_CAN.h"
+#include "Node_LoRa.h"
 #include <time.h>
 #include <sys/time.h>
 
@@ -15,7 +16,7 @@
 enum HmiEventType { EVENT_BUTTON_CLICK };
 struct HmiEvent { HmiEventType type; uint8_t buttonId; };
 
-// SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+// SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);   use this for internal oled, my oled broke, so had to use external oled
 SSD1306Wire NodeUI::display(0x3d, 500000, EXT_OLED_SDA, EXT_OLED_SCL, GEOMETRY_128_64, EXT_OLED_RST);
 MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
 
@@ -280,7 +281,7 @@ void NodeUI::drawSysHealthPage() {
     display.drawString(64, 26, "SD: " + String(NodeStorage::sdAvailable ? "OK" : "ERR"));
     
     display.drawString(0, 38, "CAN:  OK");
-    display.drawString(64, 26, "LoRa: " + String(NodeLoRa::isSystemHealthy ? "OK" : "ERR"));
+    display.drawString(64, 38, "LoRa: " + String(NodeLoRa::isSystemHealthy ? "OK" : "ERR"));
     
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.drawString(64, 52, liveDate + "  " + liveTime); // E.g., "15/08/2026  14:30:00"

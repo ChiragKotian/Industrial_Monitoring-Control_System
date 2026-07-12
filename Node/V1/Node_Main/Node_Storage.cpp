@@ -25,7 +25,7 @@ bool NodeStorage::switchToSD() {
 
 void NodeStorage::init() {
     // xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
-    xStorageQueueHandle = xQueueCreate(50, 64);
+    xStorageQueueHandle = xQueueCreate(50, sizeof(StorageLogPacket));
     configASSERT(xStorageQueueHandle != NULL);
     
     // Initial SD Mount with Retries (from your v2 code)
@@ -46,37 +46,32 @@ void NodeStorage::init() {
 }
 
 void NodeStorage::logStringPacket(const String& csvRow) {
-    // if (xStorageQueueHandle == NULL) return;
-    // StorageLogPacket packet;
-    // strncpy(packet.dataRow, csvRow.c_str(), sizeof(packet.dataRow) - 1);
-    // packet.dataRow[sizeof(packet.dataRow) - 1] = '\0';
-    // xQueueSend(xStorageQueueHandle, &packet, 0);
     if (xStorageQueueHandle == NULL) return;
     
-    char buffer[64] = {0}; // Initialize empty buffer
-    strncpy(buffer, csvRow.c_str(), sizeof(buffer) - 1);
-    
-    // Send the actual BUFFER memory into the queue. 
-    // FreeRTOS will copy all 64 bytes into its own safe storage.
-    xQueueSend(xStorageQueueHandle, &buffer, 0);
+    StorageLogPacket packet;
+    memset(packet.dataRow, 0, MAX_LOG_LENGTH); 
+    strncpy(packet.dataRow, csvRow.c_str(), MAX_LOG_LENGTH - 1);
+    xQueueSend(xStorageQueueHandle, &packet, 0);
 }
 
 void NodeStorage::runStorageWorker(void* pvParameters) {
-    // Array of 64-byte strings to hold the batch
-    char batchBuffer[STORAGE_BATCH_SIZE][64]; 
+    // 🛡️ Safe, static array of Structs. Perfectly matches the Queue size!
+    static StorageLogPacket batchBuffer[STORAGE_BATCH_SIZE]; 
     int count = 0;
     TickType_t lastFlushTime = xTaskGetTickCount();
 
     for (;;) {
-        char incomingPacket[64];
+        StorageLogPacket incomingPacket; // Exactly matches queue size
 
-        // Receive the 64 bytes from the queue directly into our local string
-        if (xQueueReceive(xStorageQueueHandle, &incomingPacket, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            strncpy(batchBuffer[count], incomingPacket, 64);
-            count++;
+        if (count < STORAGE_BATCH_SIZE) {
+            // Safely pull the full struct out of the queue
+            if (xQueueReceive(xStorageQueueHandle, &incomingPacket, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                batchBuffer[count] = incomingPacket; // Direct struct-to-struct copy!
+                count++;
+            }
         }
 
-        // ... Wait for batch full ...
+        // ... Wait for batch full or timeout ...
         
         if (count >= STORAGE_BATCH_SIZE || (count > 0 && (xTaskGetTickCount() - lastFlushTime > pdMS_TO_TICKS(STORAGE_TIMEOUT_MS)))) {
             if (xSemaphoreTake(hSpiMutex, pdMS_TO_TICKS(1000))) {
@@ -85,22 +80,27 @@ void NodeStorage::runStorageWorker(void* pvParameters) {
                     File f = SD.open("/telemetry.csv", FILE_APPEND);
                     if (f) {
                         for(int i=0; i<count; i++) {
-                            // Print the raw string
-                            f.print(batchBuffer[i]);
+                            // Print the character array INSIDE the struct
+                            f.print(batchBuffer[i].dataRow);
                         }
                         f.flush();
                         f.close();
                         sdAvailable = true; 
-                        count = 0; 
-                        lastFlushTime = xTaskGetTickCount();
                     } 
                     else {
                         sdAvailable = false; 
                     }
                     
+                    // Empty the batch count
+                    count = 0; 
+                    lastFlushTime = xTaskGetTickCount();
+                    
                     digitalWrite(SD_CS, HIGH); // Sleep SD
                 } else {
                     sdAvailable = false;
+                    // Hardware bus failed. Drop batch to prevent memory pile-up.
+                    count = 0;
+                    lastFlushTime = xTaskGetTickCount();
                 }
                 
                 xSemaphoreGive(hSpiMutex); // RELEASE KEY

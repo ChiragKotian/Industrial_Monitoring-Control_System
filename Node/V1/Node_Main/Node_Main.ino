@@ -38,7 +38,7 @@ void setup() {
 
     Serial.println(F("[SYSTEM] Spawning Pinned Core Threads..."));
 
-    xTaskCreatePinnedToCore(NodeUI::runHMITask, "HMI_Task", 4096, NULL, 1, &hUiTask, 0);
+    xTaskCreatePinnedToCore(NodeUI::runHMITask, "HMI_Task", 8192, NULL, 1, &hUiTask, 0);
     xTaskCreatePinnedToCore(NodeStorage::runStorageWorker, "Storage_Task", 4096, NULL, 2, &hStorageTask, 1);
     xTaskCreatePinnedToCore(NodeCAN::runNetworkWorker, "CAN_Task", 4096, NULL, 3, &hCanTask, 1);
     xTaskCreatePinnedToCore(NodeLoRa::runLoRaWorker, "LoRa_Task", 4096, NULL, 1, NULL, 1);

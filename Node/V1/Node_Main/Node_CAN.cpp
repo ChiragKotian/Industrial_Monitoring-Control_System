@@ -208,14 +208,22 @@ void NodeCAN::parseIncomingFrame(struct can_frame& frame) {
                     NodeRegistry::getNodeSnapshot(rawId, nodeInfo);
                 }
 
-                // 🕒 GENERATE THE INDUSTRIAL CSV TIMESTAMP
+                // // 🕒 GENERATE THE INDUSTRIAL CSV TIMESTAMP (Syncing with UI's reliable clock)
                 struct tm timeinfo;
-                String timeStamp = String(millis()); 
-                if(getLocalTime(&timeinfo, 10)) {
+                String timeStamp; 
+                
+                // Fetch the live time exactly like the UI does (10ms timeout)
+                if(getLocalTime(&timeinfo, 10)) { 
                     char dtBuff[25];
+                    // Format strictly to match dashboard parser requirements
                     strftime(dtBuff, sizeof(dtBuff), "%Y-%m-%d %H:%M:%S", &timeinfo);
                     timeStamp = String(dtBuff);
+                } else {
+                    // Failsafe in case RTC is busy
+                    timeStamp = String(millis()); 
                 }
+
+                
 
                 String logLine = timeStamp + "," + String(rawId) + "," + String(nodeInfo.groupType) + ",";
                 switch (nodeInfo.groupType) {
