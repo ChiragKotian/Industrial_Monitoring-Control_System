@@ -339,7 +339,7 @@ In the industrial IoT space, the Arduino Nano is traditionally viewed as a "hobb
 
 * **Abstracted Complexity for End-Users:** Substation operators are experts in high-voltage infrastructure, not embedded C++. The LMP is designed to be a "black box." A technician simply plugs it in, and the gateway auto-discovers it. If something breaks, the system explicitly points out the exact hardware fault via Error Bytes, eliminating the need for the operator to debug code.
 * **Unrivaled Sensor Ecosystem:** The Master Node (ESP32) rarely requires reprogramming. However, the LMPs will frequently require updates as new, experimental sensors are added to the plant. By using Arduino, future technicians gain access to the world's largest open-source sensor library ecosystem. A junior engineer can easily download an off-the-shelf library, extract the required sensor data, and drop it into our CAN payload with minimal coding experience.
-* **Extreme Cost-Efficiency:** At roughly ₹400 ($5) per unit, the Nano is so economical that an entire node can be treated as a disposable, hot-swappable consumable.
+* **Extreme Cost-Efficiency:** At roughly ₹200 ($2.5) per unit, the Nano is so economical that an entire node can be treated as a disposable, hot-swappable consumable.
 * **Hardened for Industry:** While standard Arduino code relies heavily on fragile `delay()` functions, we completely bypassed these limitations. By wrapping this low-cost silicon in custom non-blocking loops, hardware watchdogs, and preprocessor directives, we elevated a basic microcontroller into a rugged, fault-tolerant industrial node.
 
 ### 🧱 7.2 The Asynchronous "Bare-Metal" Loop
