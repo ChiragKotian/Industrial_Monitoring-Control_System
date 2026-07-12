@@ -16,7 +16,7 @@
 enum HmiEventType { EVENT_BUTTON_CLICK };
 struct HmiEvent { HmiEventType type; uint8_t buttonId; };
 
-// SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+// SSD1306Wire NodeUI::display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);   use this for internal oled, my oled broke, so had to use external oled
 SSD1306Wire NodeUI::display(0x3d, 500000, EXT_OLED_SDA, EXT_OLED_SCL, GEOMETRY_128_64, EXT_OLED_RST);
 MenuLevel NodeUI::activeMenuState = MENU_WELCOME_SPLASH;
 
