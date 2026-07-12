@@ -538,7 +538,7 @@ Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating
  ┃ ┃ ┃ ┣ 📜 MLX_driver.cpp         # Driver for MLX90614 sensor
  ┃ ┃ ┃ ┣ 📜 LMP_Hardware.cpp       # Preprocessor-driven sensor profiles
  ┃ ┃ ┃ ┗ 📜 LMP_Hardware.h
- ┣ 📂 Test        #Test various configs and sensors individually, **! May not work properly !**
+ ┣ 📂 Test        #Test various configs and sensors individually, ! May not work properly !
  ┃ ┣ 📂 CAN
  ┃ ┣ 📂 CAN_SD_esp_same_spi_diff_CS_MISO
  ┃ ┣ 📂 Display_one_button
