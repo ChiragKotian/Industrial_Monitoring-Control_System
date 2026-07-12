@@ -332,9 +332,17 @@ stateDiagram-v2
 
 While the ESP32 Master Gateway handles complex routing and LoRa transmission, the actual data acquisition happens at the extreme edge: the **Local Monitoring Panels (LMPs)**. 
 
-Each LMP is powered by an 8-bit Arduino Nano. In standard hobbyist code, an Arduino relies heavily on `delay()` functions and crashes entirely if an I2C sensor is unplugged. To survive in a high-EMI substation, the LMP firmware was engineered with a **Non-Blocking, Self-Healing, and Preprocessor-Driven Architecture**.
+Each LMP is powered by an 8-bit Arduino Nano.
 
-### 🧱 7.1 The Asynchronous "Bare-Metal" Loop
+### 🤔 7.1 Why the Arduino Nano? The "Black Box" Philosophy
+In the industrial IoT space, the Arduino Nano is traditionally viewed as a "hobbyist" microcontroller. However, it was explicitly chosen for the LMP edge nodes for several strategic operational reasons:
+
+* **Abstracted Complexity for End-Users:** Substation operators are experts in high-voltage infrastructure, not embedded C++. The LMP is designed to be a "black box." A technician simply plugs it in, and the gateway auto-discovers it. If something breaks, the system explicitly points out the exact hardware fault via Error Bytes, eliminating the need for the operator to debug code.
+* **Unrivaled Sensor Ecosystem:** The Master Node (ESP32) rarely requires reprogramming. However, the LMPs will frequently require updates as new, experimental sensors are added to the plant. By using Arduino, future technicians gain access to the world's largest open-source sensor library ecosystem. A junior engineer can easily download an off-the-shelf library, extract the required sensor data, and drop it into our CAN payload with minimal coding experience.
+* **Extreme Cost-Efficiency:** At roughly ₹400 ($5) per unit, the Nano is so economical that an entire node can be treated as a disposable, hot-swappable consumable.
+* **Hardened for Industry:** While standard Arduino code relies heavily on fragile `delay()` functions, we completely bypassed these limitations. By wrapping this low-cost silicon in custom non-blocking loops, hardware watchdogs, and preprocessor directives, we elevated a basic microcontroller into a rugged, fault-tolerant industrial node.
+
+### 🧱 7.2 The Asynchronous "Bare-Metal" Loop
 The Arduino Nano lacks the RAM to run FreeRTOS. Instead, `lmp_code.ino` utilizes a highly disciplined, event-driven `loop()` structure.
 
 * **Zero `delay()` Tolerance:** The code never uses blocking delays. The processor rapidly cycles, continuously polling the MCP2515 CAN controller. This ensures that incoming opcodes (like the `0x09` Emergency Stop or `0x07` Set Poll Rate) are serviced instantaneously.
@@ -347,7 +355,7 @@ _Click the image below to watch control of LMP via node i.e. dynamic polling._
   </a>
 </p>
 
-### 🛡️ 7.2 Hardware Watchdogs & "Self-Healing" Logic
+### 🛡️ 7.3 Hardware Watchdogs & "Self-Healing" Logic
 Industrial sensors placed on vibrating motors or high-voltage transformers are prone to physical wire degradation. The LMP firmware is designed to survive catastrophic hardware failures automatically.
 
 1. **The I2C Freeze Trap (`Wire.setWireTimeout`):** Standard Arduino `Wire.h` libraries will infinitely loop (hang the entire processor) if an I2C device loses power during a transmission. We implemented `Wire.setWireTimeout(25000, true);` in the `init()` block. If a sensor line is severed, the Nano forces the hardware to abort the electrical operation after 25ms, saving the networking loop from a fatal freeze.
@@ -357,7 +365,7 @@ Industrial sensors placed on vibrating motors or high-voltage transformers are p
 
 ---
 
-### 🔌 7.3 True Modularity via Preprocessor Compilation
+### 🔌 7.4 True Modularity via Preprocessor Compilation
 One of the primary goals of AgnostiLink was to allow future engineers to deploy new sensor profiles without having to understand or rewrite the complex CAN networking logic.
 
 We achieved this by utilizing **C++ Preprocessor Directives** (`#if`, `#elif`) inside `LMP_Hardware.cpp`.
