@@ -126,11 +126,11 @@ graph TD
     CAN -.->|Updates Live State| Registry
     UI -.->|Reads Live State| Registry
 
-    Q_SD ==>|Batch Write| Storage
-    Q_LoRa ==>|Encrypt & Send| LoRa
+    Q_SD ==>|Need to Batch Write| Storage
+    Q_LoRa ==>|Need to Encrypt & Send| LoRa
 
     ISR ==>|Push Event| Q_UI
-    Q_UI ==>|State Change| UI
+    Q_UI ==>|Need to change state| UI
 
     %% SPI Mutex Logic
     CAN -.-x|Takes Mutex| M_SPI
