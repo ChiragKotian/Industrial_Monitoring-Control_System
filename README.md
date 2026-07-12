@@ -97,6 +97,7 @@ A common question when designing industrial IoT networks is why we opted for LoR
 4. **Regulatory Compliance & Zero Telecom Fees:** The gateways operate strictly within the **IN865 (865–867 MHz)** Industrial, Scientific, and Medical (ISM) band. This frequency is legally open and license-free in India (WPC compliant). By using localized LoRa instead of 4G/LTE cellular modules, the facility avoids recurring monthly SIM-card data charges and sidesteps future telecom regulatory hurdles.
 
 #### Wireless Protocol Comparison Matrix
+<p align="center">
 | Feature | Wi-Fi (2.4 GHz) | Zigbee (2.4 GHz) | **LoRa (IN865)** |
 | :--- | :--- | :--- | :--- |
 | **Industrial Range** | ~50 Meters | ~15 Meters | **5,000+ Meters** |
@@ -104,7 +105,7 @@ A common question when designing industrial IoT networks is why we opted for LoR
 | **Power Consumption** | Very High | Low | **Ultra-Low** |
 | **Infrastructure Needed** | Multiple Access Points | Dense Mesh Repeaters | **Single Central Gateway** |
 | **EMI Immunity** | Moderate | Moderate | **High (Chirp Spread Spectrum)** |
-
+</p>
 ## ✨ 4. Core Features & Engineering Innovations
 
 The AgnostiLink ecosystem was built to survive in unforgiving industrial environments. Standard hobbyist approaches (like running all code in a single `loop()`) fail under refinery conditions. Instead, this system utilizes enterprise-grade embedded architecture.
