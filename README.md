@@ -471,10 +471,12 @@ The physical hardware and firmware layers of AgnostiLink are currently **100% op
 * [x] Configured a SenseCAP M2 Gateway to bypass cloud whitelists and directly forward local UDP packets.
 * [x] Wrote a centralized Python listener (`lora_listener.py`) to catch UDP packets, strip network headers, decode Base64, decrypt the AES-128 payload using `pycryptodome`, and extract clean industrial CSV data strings.
 
-<img width="1407" height="1001" alt="loraCatcher" src="https://github.com/user-attachments/assets/0f82f327-4f7a-4358-b2e3-530bb69d039a" />
-
-<img width="3980" height="1567" alt="loraComm" src="https://github.com/user-attachments/assets/bde74036-ba31-4666-aaeb-016c863c4f3e" />
-
+<p align="center">
+<img width="600" alt="loraCatcher" src="https://github.com/user-attachments/assets/0f82f327-4f7a-4358-b2e3-530bb69d039a" />
+</p>
+<p align="center">
+<img width="600" alt="loraComm" src="https://github.com/user-attachments/assets/bde74036-ba31-4666-aaeb-016c863c4f3e" />
+</p>
 
 ---
 
@@ -570,7 +572,9 @@ Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating
 |  **GPIO 42** | Push Button  | `Down` | Physical UI Nav Button |
 |  **GPIO 47** | Push Button  | `Home` | Physical UI Nav Button |
 
-<img width="744" height="489" alt="image" src="https://github.com/user-attachments/assets/86fdaf3e-feb9-41b3-af75-4323a2078ee5" />
+<p align="center">
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/86fdaf3e-feb9-41b3-af75-4323a2078ee5" />
+</p>
 
 ### ⚠️ Hardware Integration Note: SPI Bus Contention
 During development, we identified that many low-cost SD card modules do not properly release the MISO line when their Chip Select (CS) is inactive. This causes bus contention, preventing the CAN controller from communicating. 
@@ -583,9 +587,13 @@ During development, we identified that many low-cost SD card modules do not prop
 * Transceivers: MCP2515 + TJA1050 CAN Modules
 * Gateway: SenseCAP M2 LoRaWAN Gateway (or similar UDP Packet Forwarder)
 * Sensors: MLX90614 (IR), AHT21B (Humidity/Temp)
-  
-<img width="1246" height="614" alt="heltec2" src="https://github.com/user-attachments/assets/a9976935-4019-4ca9-bf4e-a0189700b4b9" />
-<img width="1805" height="936" alt="heltec" src="https://github.com/user-attachments/assets/aa7b5f40-6092-44ed-846f-d4b8c9045cec" />
+
+<p align="center">
+<img width="600" alt="heltec2" src="https://github.com/user-attachments/assets/a9976935-4019-4ca9-bf4e-a0189700b4b9" />
+</p>
+<p align="center">
+<img width="600" alt="heltec" src="https://github.com/user-attachments/assets/aa7b5f40-6092-44ed-846f-d4b8c9045cec" />
+</p>
 
 
 ### Firmware Dependencies (Install via Arduino Library Manager):
