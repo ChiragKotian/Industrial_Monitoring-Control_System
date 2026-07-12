@@ -107,8 +107,8 @@ The system requires zero firmware modifications when the facility expands. It ut
 
 _Click the image below to watch multi-LMP detection on CAN bus._
 <p align="center">
-  <a href="https://youtube.com/shorts/Hb-BoFzUOH0?feature=share">
-    <img src="https://img.youtube.com/vi/Hb-BoFzUOH0/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
+  <a href="https://youtu.be/oQ7R5YXnGEo">
+    <img src="https://img.youtube.com/vi/oQ7R5YXnGEo/maxresdefault.jpg" width="600" alt="AgnostiLink Project Demo Video">
   </a>
 </p>
 
