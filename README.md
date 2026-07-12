@@ -98,6 +98,53 @@ To prevent network bottlenecks and screen freezing, the ESP32-S3 Gateway runs a 
 * **Core 1 (The Brain):** Handles heavy lifting—LoRa AES encryption/transmission, SD Card file I/O operations, and OLED rendering.
 * **Thread Safety:** Cores do not share global variables. Data is securely passed between the hardware layer and the transmission layer using **FreeRTOS Queues and Mutex Semaphores**, completely eliminating race conditions and memory corruption.
 
+#### FreeRTOS Thread & IPC Topology
+```mermaid
+graph TD
+    subgraph "Core 0 (Hardware & Network)"
+        CAN["CAN Task<br/>(Network Polling)"]
+        ISR["Hardware Interrupts<br/>(5-Button Array)"]
+    end
+
+    subgraph "Core 1 (Application & I/O)"
+        UI["HMI Task<br/>(OLED Rendering)"]
+        Storage["Storage Task<br/>(SD Card IO)"]
+        LoRa["LoRa Task<br/>(AES-128 & Tx)"]
+    end
+
+    subgraph "FreeRTOS IPC (Inter-Process Communication)"
+        Q_SD[("xStorageQueue<br/>(Deep-Copy 128B)")]
+        Q_LoRa[("xLoRaQueue<br/>(Struct Payload)")]
+        Q_UI[("xHmiQueue<br/>(Button Events)")]
+        M_SPI{"hSpiMutex<br/>(HSPI Lock)"}
+        Registry[("NodeRegistry<br/>(Global Array)")]
+    end
+
+    %% Data Flow
+    CAN ==>|Writes CSV Row| Q_SD
+    CAN ==>|Writes Telemetry| Q_LoRa
+    CAN -.->|Updates Live State| Registry
+    UI -.->|Reads Live State| Registry
+
+    Q_SD ==>|Batch Write| Storage
+    Q_LoRa ==>|Encrypt & Send| LoRa
+
+    ISR ==>|Push Event| Q_UI
+    Q_UI ==>|State Change| UI
+
+    %% SPI Mutex Logic
+    CAN -.-x|Takes Mutex| M_SPI
+    Storage -.-x|Takes Mutex| M_SPI
+    
+    classDef core fill:#e3f2fd,stroke:#3b82f6,stroke-width:2px;
+    classDef ipc fill:#fef3c7,stroke:#eab308,stroke-width:2px;
+    classDef mutex fill:#fee2e2,stroke:#ef4444,stroke-width:2px;
+    
+    class CAN,ISR,UI,Storage,LoRa core;
+    class Q_SD,Q_LoRa,Q_UI,Registry ipc;
+    class M_SPI mutex;
+```
+
 ### 🔌 4.2 Deterministic Auto-Discovery & "Plug-and-Play" Expansion
 The system requires zero firmware modifications when the facility expands. It utilizes a **4-Phase Boot Sequence**:
 1. **Bus Flooding:** The gateway broadcasts a `CMD_DISCOVER` Opcode (`0x01`).
@@ -494,7 +541,7 @@ One of the core mandates of the AgnostiLink initiative was to prove that industr
 We successfully built, programmed, and validated the entire multi-tier test-bed architecture for under **₹25,000 INR**.
 
 ### 🛒 Prototype Bill of Materials (BOM)
-* **The IT Backhaul Layer:** The most significant investment was the **SenseCAP M2 LoRaWAN Gateway** (~₹11,000). However, a single gateway can service an entire campus radius, making this a one-time fixed cost rather than a recurring node cost.
+* **The IT Backhaul Layer:** The most significant investment was the **SenseCAP M2 Gateway** (~₹11,000). However, a single gateway can service an entire campus radius, making this a one-time fixed cost rather than a recurring node cost.
 * **The Master Gateway (Zone Level):** Instead of purchasing a ₹50,000+ proprietary industrial PLC, we utilized a **Heltec WiFi LoRa 32 V3 (ESP32-S3)** (~₹2,500). By engineering a strict FreeRTOS multi-threaded architecture, we extracted deterministic, PLC-level performance from consumer-priced silicon.
 * **The Field Edge Layer (LMPs):** 8-bit Arduino Nanos (~₹400/ea) paired with MCP2515 CAN modules (~₹150/ea) brought the intelligence-per-node cost down to a fraction of a standard industrial transmitter.
 * **Sensors & Infrastructure:** MLX90614 non-contact IR sensors, AHT21B high-precision humidity sensor, basic electronics parts like resistors, perf board, wires, external hardware reset buttons, etc., and standard Cat6 twisted-pair cabling accounted for the remaining ~₹6,000. 
