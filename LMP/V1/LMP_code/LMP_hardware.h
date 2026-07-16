@@ -7,8 +7,8 @@
 // =========================================================
 // 🛠️ DESIGNATED PANEL STRUCTURAL PROFILES
 // =========================================================
-#define LMP_ID       14   // Unique device identification number (1 to 160)
-#define LMP_GROUP    1    // Profile Layout Matrix: 1=1xIR, 2=1xIR+Hum, 3=2xIR, 4=Actuators
+#define LMP_ID       20   // Unique device identification number (1 to 160)
+#define LMP_GROUP    2    // Profile Layout Matrix: 1=1xIR, 2=1xIR+Hum, 3=2xIR, 4=Actuators
 
 class LMP_Hardware {
 public:

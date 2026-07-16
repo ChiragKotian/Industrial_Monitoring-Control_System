@@ -29,6 +29,7 @@ void loop() {
         
         uint8_t targetId    = rxFrame.data[0]; 
         uint8_t instruction = rxFrame.data[1]; 
+        Serial.println(targetId);
         
         bool isBroadcast = (rxFrame.can_id == targetId);
 
