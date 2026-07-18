@@ -47,46 +47,84 @@ with st.sidebar:
         st.cache_data.clear()
 
 
-# --- 3. DYNAMIC PARSER ---
-@st.cache_data(ttl=2)
-def load_and_parse_data(mode):
-    files_to_read = []
-    if mode in ["Live Telemetry Only", "Merged (Live + SD)"]:
-        if os.path.exists(LIVE_FILE): files_to_read.append(LIVE_FILE)
-    if mode in ["SD Card Data Only", "Merged (Live + SD)"]:
-        if os.path.exists(SD_FILE): files_to_read.append(SD_FILE)
+# --- 3. DYNAMIC PARSER & DELTA LOADING ---
+# Setup persistent memory for the live feed so we don't re-read old data
+if "live_df" not in st.session_state:
+    st.session_state.live_df = pd.DataFrame()
+    st.session_state.live_file_pos = 0
 
+def extract_payload(lines_iterable):
+    """Helper function to parse our AL-CAN text strings into structured rows"""
     parsed_data = []
-    for filepath in files_to_read:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
+    for line in lines_iterable:
+        line = line.strip()
+        if not line: continue
+        parts = line.split(',')
+        if len(parts) >= 4:
+            timestamp_str, node_id, group_id = parts[0], parts[1], parts[2]
+            payload = ",".join(parts[3:])
+            
+            dt = pd.to_datetime(timestamp_str, errors='coerce', dayfirst=True)
+            row = {"Timestamp": dt, "Node_ID": int(node_id), "Group_ID": int(group_id), "Raw_Payload": payload}
+            
+            for s in payload.split(';'):
+                if ':' in s:
+                    key, val = s.split(':', 1)
+                    try: row[key.strip()] = float(val.strip())
+                    except ValueError: row[key.strip()] = val.strip()
+            parsed_data.append(row)
+    return pd.DataFrame(parsed_data)
+
+@st.cache_data
+def load_static_sd_data():
+    """Reads the SD Card data. Cached so it only runs once per upload!"""
+    if os.path.exists(SD_FILE):
+        with open(SD_FILE, 'r', encoding='utf-8') as f:
+            return extract_payload(f)
+    return pd.DataFrame()
+
+def load_and_parse_data(mode):
+    df_list = []
+    
+    # 1. LIVE DATA (DELTA APPENDING)
+    if mode in ["Live Telemetry Only", "Merged (Live + SD)"]:
+        if os.path.exists(LIVE_FILE):
+            current_size = os.path.getsize(LIVE_FILE)
+            
+            # If file was deleted or cleared manually, reset our memory
+            if current_size < st.session_state.live_file_pos:
+                st.session_state.live_file_pos = 0
+                st.session_state.live_df = pd.DataFrame()
+            
+            # If the file grew, read ONLY the new bytes!
+            if current_size > st.session_state.live_file_pos:
+                with open(LIVE_FILE, "r", encoding="utf-8") as f:
+                    f.seek(st.session_state.live_file_pos) # Skip straight to the new data
+                    new_df = extract_payload(f)
+                    st.session_state.live_file_pos = f.tell() # Save our new position
                 
-                parts = line.split(',')
-                if len(parts) >= 4:
-                    timestamp_str, node_id, group_id = parts[0], parts[1], parts[2]
-                    payload = ",".join(parts[3:])
-                    
-                    dt = pd.to_datetime(timestamp_str, errors='coerce', dayfirst=True)
-                    row = {
-                        "Timestamp": dt, "Node_ID": int(node_id), 
-                        "Group_ID": int(group_id), "Raw_Payload": payload
-                    }
-                    
-                    for s in payload.split(';'):
-                        if ':' in s:
-                            key, val = s.split(':', 1)
-                            try: row[key.strip()] = float(val.strip())
-                            except ValueError: row[key.strip()] = val.strip()
-                                
-                    parsed_data.append(row)
-                
-    df = pd.DataFrame(parsed_data)
-    if not df.empty:
-        # Sort chronologically and drop duplicates (in case SD and Live overlap!)
-        df = df.sort_values(by="Timestamp").drop_duplicates(subset=["Timestamp", "Node_ID"])
-    return df
+                # Append the newly parsed micro-batch to the master live DataFrame
+                if not new_df.empty:
+                    if st.session_state.live_df.empty:
+                        st.session_state.live_df = new_df
+                    else:
+                        st.session_state.live_df = pd.concat([st.session_state.live_df, new_df], ignore_index=True)
+        
+        df_list.append(st.session_state.live_df)
+
+    # 2. SD CARD DATA
+    if mode in ["SD Card Data Only", "Merged (Live + SD)"]:
+        sd_df = load_static_sd_data()
+        df_list.append(sd_df)
+        
+    # 3. MERGE & CLEANUP
+    if df_list:
+        combined = pd.concat(df_list, ignore_index=True)
+        if not combined.empty:
+            combined = combined.sort_values(by="Timestamp").drop_duplicates(subset=["Timestamp", "Node_ID"])
+        return combined
+    
+    return pd.DataFrame()
 
 df = load_and_parse_data(data_mode)
 
