@@ -6,8 +6,6 @@
 ![Protocol: CAN & LoRa](https://img.shields.io/badge/Protocol-CAN%20Bus%20%7C%20LoRaWAN-orange)
 ![Environment: FreeRTOS](https://img.shields.io/badge/Environment-FreeRTOS-yellow)
 
-
-
 ### 🌿 Repository Branching Strategy
 To maintain industrial reliability while allowing for continuous R&D, this repository operates on a strict two-branch system:
 * **`main` (Stable):** The production-ready branch. Contains the battle-tested, core features (FreeRTOS multi-threading, AL-CAN discovery and communication, SD card data loging, UI, LoRa). Highly stable, but limited to foundational features.
@@ -37,7 +35,6 @@ The system relies on a **two-tier communication architecture**:
 ---
 
 ## 🏗️ 3. System Architecture & Physical Topology
-
 
 AgnostiLink is designed to scale spatially across massive industrial campuses without requiring complex IT infrastructure or Wi-Fi mesh networks. The deployment topology is divided into three distinct physical layers:
 
@@ -88,6 +85,7 @@ graph TD
     
     SenseCAP ==>|Local Wi-Fi / Ethernet| Python
 ```
+
 ### 📡 3.3 Why LoRa? The Wireless Backhaul Justification
 A common question when designing industrial IoT networks is why we opted for LoRa (Long Range) rather than ubiquitous protocols like Wi-Fi, Bluetooth, or Zigbee. The decision was driven by the strict physical and architectural realities of a high-voltage refinery environment:
 
@@ -486,10 +484,13 @@ While v1.0 successfully logs data and supports downlink architecture natively vi
 ### 🤖 9.3 Robotic Process Automation (RPA)
 To eliminate the overhead of manual data entry, the AgnostiLink Python backend can be tied to enterprise software bots (like UiPath). If the gateway logs a Level-2 thermal anomaly, it can trigger a webhook to a bot that automatically logs into the corporate SAP PM (Plant Maintenance) module, generates a Work Order, and emails the shift supervisor with zero human interaction.
 
+### 🔌 9.4 Infinite Sensor Expansion
+Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating entirely new industrial sensors requires zero changes to the complex FreeRTOS loops. Future teams can easily snap in Vibration Sensors (Accelerometers) or Gas Detectors (MQ-series) simply by declaring a new Group ID in the header file.
+
 ## 📂 Repository Structure
 ```text
 📦 Industrial_Monitoring-Control_System
- ┣ 📂 ComputerConnectedToGateway      # Core FreeRTOS firmware for the Heltec Master Node
+ ┣ 📂 ComputerConnectedToGateway      # Python ingestion tools and servers
  ┃ ┣ 📜 lora_listener.py       # UDP socket, AES decryption
  ┣ 📂 Node       # Core FreeRTOS firmware for the Heltec Master Node
  ┃ ┣ 📂 V1
@@ -529,16 +530,16 @@ To eliminate the overhead of manual data entry, the AgnostiLink Python backend c
 ### 🔌 Node Wiring Pinout (ESP32-S3)
 | ESP32 Pin | Peripheral | Function | Notes |
 | :--- | :--- | :--- | :--- |
-|  **GPIO 6**  | SPI (Shared) | `MOSI` | Connects to both CAN & SD Card |
-|  **GPIO 4**  | SPI (Shared) | `SCK`  | Connects to both CAN & SD Card |
-|  **GPIO 5**  | MCP2515 (CAN)| `MISO` | MISO for CAN Bus |
-|  **GPIO 48** | SD card      | `MISO` | MISO for CAN Bus |
+|  **GPIO 6** | SPI (Shared) | `MOSI` | Connects to both CAN & SD Card |
+|  **GPIO 4** | SPI (Shared) | `SCK`  | Connects to both CAN & SD Card |
+|  **GPIO 5** | MCP2515 (CAN)| `MISO` | MISO for CAN Bus |
+|  **GPIO 48** | SD card      | `MISO` | MISO for SD Card |
 |  **GPIO 26** | SD card      | `CS`   | Chip Select for SD Card |
-|  **GPIO 7**  | MCP2515 (CAN)| `CS`   | Chip Select for CAN Bus |
-|  **GPIO 2**  | MCP2515 (CAN)| `INT`  | Interrupt for CAN Bus |
-|    **RST**   | Push Button  | `RST`  | Physical Hardware Reset |
-|  **GPIO 1**  | Push Button  | `Enter`| Physical UI Nav Button |
-|  **GPIO 3**  | Push Button  | `Back` | Physical UI Nav Button |
+|  **GPIO 7** | MCP2515 (CAN)| `CS`   | Chip Select for CAN Bus |
+|  **GPIO 2** | MCP2515 (CAN)| `INT`  | Interrupt for CAN Bus |
+|    **RST** | Push Button  | `RST`  | Physical Hardware Reset |
+|  **GPIO 1** | Push Button  | `Enter`| Physical UI Nav Button |
+|  **GPIO 3** | Push Button  | `Back` | Physical UI Nav Button |
 |  **GPIO 41** | Push Button  |  `UP`  | Physical UI Nav Button |
 |  **GPIO 42** | Push Button  | `Down` | Physical UI Nav Button |
 |  **GPIO 47** | Push Button  | `Home` | Physical UI Nav Button |
@@ -566,7 +567,6 @@ During development, we identified that many low-cost SD card modules do not prop
 <img width="600" alt="heltec" src="https://github.com/user-attachments/assets/aa7b5f40-6092-44ed-846f-d4b8c9045cec" />
 </p>
 
-
 ### Firmware Dependencies (Install via Arduino Library Manager):
 * `FreeRTOS` (Native to ESP32 Arduino Core)
 * `RadioLib` by Jan Gromeš (For SX1262 LoRa control)
@@ -574,18 +574,24 @@ During development, we identified that many low-cost SD card modules do not prop
 * `Adafruit_SSD1306` & `Adafruit_GFX` (For OLED rendering)
 * `Adafruit_MLX90614` & `Adafruit_AHTX0` (For LMP sensors)
 
-### How to Run the Ingestion Server:
+### 💻 How to Run the IT Backend & Streamlit Dashboard:
+The software suite relies on a decoupled microservice architecture. You must run the background data listener and the frontend web dashboard simultaneously.
+
 1. Connect the PC to the same local network as the SenseCAP Gateway.
 2. Ensure the SenseCAP is configured to forward UDP packets to your PC's IP on port `1700`.
-3. Ensure the Python environment has the decryption and networking packages:
+3. Install the required Python security and data-visualization dependencies:
    ```bash
-   pip install pycryptodome
+   pip install pycryptodome streamlit pandas plotly
    ```
-4. Run the Python backend:
+4. **Terminal 1 (The Background Listener):** Start the LoRa decryption server. This script will catch encrypted UDP packets, decrypt them, and continuously append the raw data to `live_database.csv`. *(Note: Ensure Windows Defender/Firewall allows incoming traffic on Port 1700).*
    ```bash
    python lora_listener.py
    ```
-5. Verify that Windows Defender/Firewall allows traffic on Port `1700`.
+5. **Terminal 2 (The Operator UI):** Open a second terminal window in the exact same directory and launch the local web server.
+   ```bash
+   streamlit run dashboard.py
+   ```
+6. Your default web browser will automatically open to `http://localhost:8501`, displaying the live, auto-refreshing HPCL Substation monitoring interface!
 
 ---
 
