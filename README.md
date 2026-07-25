@@ -6,6 +6,10 @@
 ![Protocol: CAN & LoRa](https://img.shields.io/badge/Protocol-CAN%20Bus%20%7C%20LoRaWAN-orange)
 ![Environment: FreeRTOS](https://img.shields.io/badge/Environment-FreeRTOS-yellow)
 
+<p align="center">
+<img width="600" alt="Presented Prototype to Electrical Maintenance Team" src="https://github.com/user-attachments/assets/d5ccb67b-1731-481c-8bf6-5e0ff0b4c00e" />
+</p>
+
 ### 🌿 Repository Branching Strategy
 To maintain industrial reliability while allowing for continuous R&D, this repository operates on a strict two-branch system:
 * **`main` (Stable):** The production-ready branch. Contains the battle-tested, core features (FreeRTOS multi-threading, AL-CAN discovery and communication, SD card data loging, UI, LoRa). Highly stable, but limited to foundational features.
