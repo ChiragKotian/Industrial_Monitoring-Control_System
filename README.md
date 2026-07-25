@@ -1,7 +1,7 @@
 # 🏭 AgnostiLink: Open Wireless Platform for Industrial Monitoring & Automation 
 *(HPCL Substation IoT Suite)*
 
-![Status: Active Development](https://img.shields.io/badge/Status-Active_Development-brightgreen)
+![Version: 1.0 Stable](https://img.shields.io/badge/Version-1.0_Stable-brightgreen)
 ![Platform: ESP32 & Arduino](https://img.shields.io/badge/Platform-ESP32%20%7C%20Arduino-blue)
 ![Protocol: CAN & LoRa](https://img.shields.io/badge/Protocol-CAN%20Bus%20%7C%20LoRaWAN-orange)
 ![Environment: FreeRTOS](https://img.shields.io/badge/Environment-FreeRTOS-yellow)
@@ -450,67 +450,41 @@ Because of the `#if (LMP_GROUP == 2)` directives in the `.cpp` file, the Arduino
 * **SRAM Protection:** The Arduino Nano’s tiny 2KB SRAM is protected because it only ever holds the exact libraries and variables it needs for its assigned task.
 * **Infinite Expandability:** Expanding the system to include a new "Group 5" (e.g., Vibration Sensors) simply requires adding a new `#elif (LMP_GROUP == 5)` block, leaving the mission-critical CAN loop completely untouched.
 
-## 🏆 8. Milestones Achieved (Current State of the System)
+## 🏆 8. v1.0 Current Capabilities (System Status)
 
-The physical hardware and firmware layers of AgnostiLink are currently **100% operational and stable**. The system has successfully bridged the gap between raw edge physics and high-level IT ingestion.
+As of **Version 1.0**, the physical hardware, FreeRTOS firmware, and IT ingestion layers of AgnostiLink are operational, stable, and ready for physical deployment. The system successfully bridges the gap between raw edge physics and high-level IT data pipelines.
 
-### 🟢 Phase 1: Edge Acquisition (Completed)
-* [x] Engineered a non-blocking, bare-metal Arduino Nano architecture capable of polling I2C sensors without `delay()`.
-* [x] Developed the AL-CAN custom protocol, featuring Opcode routing, bit-shifted quantization, and multi-frame assembly.
-* [x] Implemented hardware watchdogs and live bitwise Error Masks to enable sensor hot-swapping and "Self-Healing" node recovery.
+### 🟢 8.1 The Edge Acquisition Layer
+* **Non-Blocking Sensor Polling:** Arduino LMPs successfully poll I2C sensors (AHT21B Humidity, MLX90614 IR Temp) without `delay()`, ensuring instant CAN bus responsiveness.
+* **Hardware Self-Healing:** I2C watchdogs and live bitwise Error Masks enable "hot-swapping." If a sensor wire breaks, the system safely reports a fault (`0xFF`) and auto-recovers the microsecond it is reconnected.
+* **AL-CAN Protocol:** Custom byte-level quantization and multi-frame assembly accurately route dynamic payloads across the 100m Cat6 bus.
 
-### 🟢 Phase 2: Gateway & FreeRTOS Architecture (Completed)
-* [x] Configured the ESP32-S3 as a deterministic CAN Master, featuring automated Node Discovery (`0x01`).
-* [x] Deployed asymmetric dual-core processing (Core 0: Network Polling, Core 1: File I/O, UI, and Radio).
-* [x] Built a lag-free, double-buffered OLED HMI utilizing a 5-button state machine and strict Breadcrumb navigation.
-* [x] Engineered shared hardware SPI (HSPI) for the MCP2515 CAN module and the MicroSD card logger, including Hot-Unplug detection.
-* [x] Implemented High-Resolution Millisecond timestamping and SD-Card Batch-Writing to protect flash memory lifespan.
+### 🟢 8.2 The Substation Master Gateway
+* **Deterministic FreeRTOS:** Asymmetric dual-core processing ensures network polling (Core 0) is never delayed by OLED rendering or SD File I/O (Core 1).
+* **Fault-Tolerant SD Logging:** Complete offline telemetry backups utilize dynamic SPI bus remapping to prevent hardware contention.
+* **Interactive Operator HMI:** A lag-free, double-buffered OLED state machine allowing field techs to view live diagnostics, error codes, and adjust polling rates via a physical 5-button array.
 
-### 🟢 Phase 3: Wireless Backhaul & Ingestion (Completed)
-* [x] Re-routed internal ESP32 FSPI pins to unlock the Heltec's onboard SX1262 LoRa radio for long-range transmission.
-* [x] Embedded military-grade **AES-128 (CBC mode)** encryption into the FreeRTOS transmission task to secure the airwaves against local interception.
-* [x] Configured a SenseCAP M2 Gateway to bypass cloud whitelists and directly forward local UDP packets.
-* [x] Wrote a centralized Python listener (`lora_listener.py`) to catch UDP packets, strip network headers, decode Base64, decrypt the AES-128 payload using `pycryptodome`, and extract clean industrial CSV data strings.
+### 🟢 8.3 The Air-Gapped IT Backend
+* **AES-128 LoRa Backhaul:** Secure, sub-GHz wireless transmission to a centralized Python UDP listener, bypassing corporate Wi-Fi and legacy SCADA licensing.
+* **Decoupled SCADA Microservice:** A local Streamlit Web Dashboard utilizing Delta-Loading to parse growing datasets efficiently.
+* **Offline Gap-Filling:** A built-in UI tool allowing technicians to drag-and-drop SD Card CSVs to automatically merge offline field data with the live server database.
 
-<p align="center">
-<img width="600" alt="loraCatcher" src="https://github.com/user-attachments/assets/0f82f327-4f7a-4358-b2e3-530bb69d039a" />
-</p>
-<p align="center">
-<img width="600" alt="loraComm" src="https://github.com/user-attachments/assets/bde74036-ba31-4666-aaeb-016c863c4f3e" />
-</p>
+> ⚠️ **Scope Boundary & Proof of Concept (PoC) Disclaimer:** The primary engineering focus of Version 1.0 was the development of the robust edge-hardware, fault-tolerant CAN bus, and deterministic FreeRTOS network. The Streamlit web dashboard provided in this repository is strictly a **Proof of Concept (PoC)**. It is not intended for production SCADA use and may exhibit UI bugs or scaling quirks. Its sole purpose is to practically demonstrate to future software teams how the backend data pipeline can be ingested to fetch live telemetry, trigger threshold alarms, and visualize timestamped CSV data.
 
 ---
 
-## 🚀 9. Future Expansions & Commercial Integrations (The Hackathon Roadmap)
+## 🚀 9. Enterprise Roadmap & Future Scalability
 
-Because the hardware edge layer outputs flawlessly structured, securely encrypted CSV/JSON data, the AgnostiLink network serves as the perfect foundation for enterprise-level software integrations. Future development will leverage commercial Software, AI, and RPA (Robotic Process Automation) systems:
+Because v1.0 was built on an abstracted, heavily decoupled architecture (AL-CAN opcodes, FreeRTOS queues, and pure CSV/JSON data outputs), the foundation is set for massive enterprise scaling. Future engineering teams can leverage this platform to build:
 
-### 🧠 9.1 Predictive Maintenance & AI Integration
-Instead of functioning purely as a reactive alarm system, the continuous stream of deterministic field data allows for immediate integration with commercial AI platforms (e.g., AWS IoT Analytics, Azure Digital Twins, or custom models via `Scikit-Learn` / `TensorFlow`).
-* **Anomaly Detection Models:** Machine learning models (like Isolation Forests or Autoencoders) can be trained on the historical thermal deltas between Phase A and Phase B of a transformer.
-* **Micro-Degradation Tracking:** The AI can detect subtle tracking currents or humidity-induced temperature rises weeks before they trigger a hard SCADA threshold alarm, generating an "Asset Health Score" and alerting the maintenance department well in advance of a failure.
+### 🧠 9.1 Predictive Maintenance & Machine Learning
+Instead of purely reactive threshold alarms, the continuous, high-resolution time-series data sitting in the central database can be fed into AI models (Isolation Forests, Autoencoders). This would allow the system to detect micro-degradations in transformer cooling efficiency weeks before a thermal runaway occurs.
 
-### 🌐 9.2 The "TwinLink" Digital Dashboard
-The Python UDP listener natively pipes decrypted incoming data directly into a local Time-Series Database (such as PostgreSQL or InfluxDB). A full-stack web application (built via Streamlit, React, or Grafana) will be deployed as the visual operator interface. This allows plant managers to view dynamic graphs, live Node topologies, and historical thermal trends from any device on the secure corporate intranet.
+### ⚡ 9.2 True IT/OT Bi-Directional Control
+While v1.0 successfully logs data and supports downlink architecture natively via `commands.json`, future iterations can wire physical high-voltage relays to Actuator LMPs (Group 4). Shift engineers could securely dispatch encrypted payloads from a central web dashboard to physically toggle ventilation fans or breaker trips remotely.
 
-### ⚡ 9.3 Secure Enterprise Downlink Control
-While the LMPs currently support Opcode `0x0A` (Actuate) via the physical OLED, this architecture natively supports remote web-based execution. Shift engineers will be able to securely dispatch AES-encrypted command payloads from the web dashboard. The Gateway receives these over LoRa, decrypts them, and directs specific LMPs to toggle their onboard relay control circuits—closing the loop from the cloud down to the physical edge actuator.
-
-### 🤖 9.4 Robotic Process Automation (UiPath) Integration
-To eliminate the overhead of manual data entry, the AgnostiLink data pipeline is designed to directly trigger enterprise software bots. If the gateway logs a critical `0x09` [CMD_PANIC] opcode or a Level-2 thermal anomaly, it can fire a webhook to a commercial **UiPath Orchestrator**. 
-The UiPath bot can automatically:
-1. Log into the corporate SAP PM (Plant Maintenance) module.
-2. Generate a structured Work Order/Notification using the exact asset ID and temperature reading.
-3. Automatically email the shift supervisor with the generated ticket number.
-*This completely automates the fault-to-ticket lifecycle with zero human interaction.*
-
-### 🔌 9.5 Hardware Sensor Expansion
-Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating entirely new industrial sensors requires zero changes to the complex CAN or FreeRTOS loops. Future development teams can easily snap in:
-* **Group 5:** Vibration Analysis (Accelerometers on high-speed motors to predict bearing wear).
-* **Group 6:** Gas Detection (MQ-series sensors for localized methane or hydrogen leaks).
-* **Group 7:** Power Quality Monitoring (CT clamps for phase load balancing).
-
----
+### 🤖 9.3 Robotic Process Automation (RPA)
+To eliminate the overhead of manual data entry, the AgnostiLink Python backend can be tied to enterprise software bots (like UiPath). If the gateway logs a Level-2 thermal anomaly, it can trigger a webhook to a bot that automatically logs into the corporate SAP PM (Plant Maintenance) module, generates a Work Order, and emails the shift supervisor with zero human interaction.
 
 ## 📂 Repository Structure
 ```text
@@ -542,14 +516,10 @@ Because of the preprocessor-driven modularity in `LMP_Hardware.cpp`, integrating
  ┃ ┃ ┃ ┣ 📜 MLX_driver.cpp         # Driver for MLX90614 sensor
  ┃ ┃ ┃ ┣ 📜 LMP_Hardware.cpp       # Preprocessor-driven sensor profiles
  ┃ ┃ ┃ ┗ 📜 LMP_Hardware.h
- ┣ 📂 Test        #Test various configs and sensors individually, ! May not work properly !
- ┃ ┣ 📂 CAN
- ┃ ┣ 📂 CAN_SD_esp_same_spi_diff_CS_MISO
- ┃ ┣ 📂 Display_one_button
- ┃ ┣ 📂 MenuCrudeDemo
- ┃ ┣ 📂 test_mcp2515_esp32
- ┃ ┣ 📂 testAHT20
- ┃ ┗ 📂 testGY906
+ ┣ 📂 MainServerGUI
+ ┃ ┣ 📜 dashboard.py 
+ ┃ ┣ 📜 live_database.csv
+ ┃ ┗ 📜 lora_listener.py 
  ┣ 📜 LICENSE
  ┗ 📜 README.md
 ```
